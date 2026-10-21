@@ -4,8 +4,9 @@
 -- lists the tabs and marks the one showing. Hiding the float leaves every shell
 -- running; it reopens on the tab last shown. A tab closes when its shell exits.
 --
--- The float can sit in one of several layouts (bottom by default), and a line of
--- key hints sits in the gap beside it, or in its bottom border when there's no gap.
+-- The float is either docked to an edge of the editor or floating in one square of
+-- a 3x3 grid. A line of key hints sits in the gap above or below it, or in its
+-- bottom border when there's no gap.
 
 local M = {}
 
@@ -16,12 +17,15 @@ local current = 0
 local win = nil
 local hint_win = nil
 local hint_buf = nil
-local layout = "bottom"
 local hints_shown = true
 
-local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+| next tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows/m move · Ctrl+Shift+h hide hints"
--- For when the full line won't fit, such as the bottom border of a half-width float.
-local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows/m move · C-S-h hints"
+-- Where the float is. Docked, `edge` and `size` apply; floating, `cell` does (0-2 each
+-- way, starting in the centre). Both are kept so switching back returns to the last spot.
+local placement = { mode = "dock", edge = "bottom", size = "large", cell = { row = 1, col = 1 } }
+
+local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+| next tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows move/resize · Ctrl+Shift+m dock/float · Ctrl+Shift+h hide hints"
+-- For when the full line won't fit, such as the bottom border of a narrow float.
+local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-m mode · C-S-h hints"
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
 local function hints_for(width)
@@ -31,41 +35,65 @@ end
 -- A cell is about twice as tall as it is wide, so 2 columns looks like 1 row.
 local SIDE_GAP = 2
 local EDGE_GAP = 1
-local WIDE_GAP = 0.1
-local MIDDLE_SIZE = 0.8
+-- Docked, the float takes this share of the editor's height (top/bottom) or width (left/right).
+local DOCK_SIZES = { large = 0.9, small = 0.2 }
+-- A move that would leave the terminal smaller than this does nothing.
+local MIN_ROWS = 5
+local MIN_COLS = 20
 
--- Each layout gives the float's outer box (border included) and where the hints go:
--- the gap above it, the gap below it, or its bottom border.
-local layouts = {
-  bottom = function(rows, cols)
-    local top = math.floor(rows * WIDE_GAP)
-    return { row = top, col = SIDE_GAP, height = rows - top - EDGE_GAP, width = cols - 2 * SIDE_GAP, hints = "above" }
-  end,
-  top = function(rows, cols)
-    local bottom = math.floor(rows * WIDE_GAP)
-    return { row = EDGE_GAP, col = SIDE_GAP, height = rows - bottom - EDGE_GAP, width = cols - 2 * SIDE_GAP, hints = "below" }
-  end,
-  left = function(rows, cols)
-    return { row = EDGE_GAP, col = SIDE_GAP, height = rows - 2 * EDGE_GAP, width = math.floor(cols / 2) - SIDE_GAP, hints = "footer" }
-  end,
-  right = function(rows, cols)
-    local width = math.floor(cols / 2) - SIDE_GAP
-    return { row = EDGE_GAP, col = cols - SIDE_GAP - width, height = rows - 2 * EDGE_GAP, width = width, hints = "footer" }
-  end,
-  middle = function(rows, cols)
-    local height = math.floor(rows * MIDDLE_SIZE)
-    local width = math.floor(cols * MIDDLE_SIZE)
+-- The float's outer box (border included) for a placement, in an editor area of
+-- `rows` x `cols`.
+local function geometry(p, rows, cols)
+  if p.mode == "float" then
+    local cell_height = math.floor(rows / 3)
+    local cell_width = math.floor(cols / 3)
     return {
-      row = math.floor((rows - height) / 2),
-      col = math.floor((cols - width) / 2),
-      height = height,
-      width = width,
-      hints = "above",
+      row = p.cell.row * cell_height + EDGE_GAP,
+      col = p.cell.col * cell_width + SIDE_GAP / 2,
+      height = cell_height - EDGE_GAP,
+      width = cell_width - SIDE_GAP,
     }
-  end,
-}
+  end
 
-M.layouts = vim.tbl_keys(layouts)
+  if p.edge == "top" or p.edge == "bottom" then
+    local share = math.floor(rows * DOCK_SIZES[p.size])
+    return {
+      row = p.edge == "top" and EDGE_GAP or rows - share,
+      col = SIDE_GAP,
+      height = share - EDGE_GAP,
+      width = cols - 2 * SIDE_GAP,
+    }
+  end
+
+  local share = math.floor(cols * DOCK_SIZES[p.size])
+  return {
+    row = EDGE_GAP,
+    col = p.edge == "left" and SIDE_GAP or cols - share,
+    height = rows - 2 * EDGE_GAP,
+    width = share - SIDE_GAP,
+  }
+end
+
+-- The editor rows a float can use: everything above the statusline.
+local function editor_area()
+  return vim.o.lines - vim.o.cmdheight - 1, vim.o.columns
+end
+
+local function box()
+  return geometry(placement, editor_area())
+end
+
+-- Where the hints line goes: the row above the float, the row below it, or (with
+-- neither free) its bottom border.
+local function hints_row(outer, rows)
+  if outer.row >= 1 then
+    return outer.row - 1
+  end
+  if outer.row + outer.height < rows then
+    return outer.row + outer.height
+  end
+  return nil
+end
 
 local function win_is_open()
   return win ~= nil and api.nvim_win_is_valid(win)
@@ -79,13 +107,9 @@ local function title()
   return " " .. table.concat(labels, " │ ") .. " "
 end
 
--- The editor rows a float can use: everything above the statusline.
-local function box()
-  return layouts[layout](vim.o.lines - vim.o.cmdheight - 1, vim.o.columns)
-end
-
 local function float_config()
   local outer = box()
+  local in_footer = hints_shown and hints_row(outer, (editor_area())) == nil
 
   -- The border adds a row above and below, and a column either side.
   local config = {
@@ -97,7 +121,7 @@ local function float_config()
     width = outer.width - 2,
     title = title(),
     title_pos = "center",
-    footer = hints_shown and outer.hints == "footer" and (" " .. hints_for(outer.width - 2) .. " ") or "",
+    footer = in_footer and (" " .. hints_for(outer.width - 2) .. " ") or "",
     footer_pos = "center",
   }
   return config
@@ -110,27 +134,30 @@ local function close_hints()
   hint_win = nil
 end
 
--- Shows the hints line in the gap above or below the float, centred on it.
+-- Shows the hints line in the gap above or below the float, centred on it. It may be
+-- wider than the float (a floating box is a third of the editor), but stays on screen.
 local function show_hints()
   close_hints()
 
+  local rows, cols = editor_area()
   local outer = box()
-  local row = outer.hints == "above" and outer.row - 1 or outer.row + outer.height
-  if not hints_shown or outer.hints == "footer" or row < 0 then
+  local row = hints_row(outer, rows)
+  if not hints_shown or row == nil then
     return
   end
 
   if not (hint_buf and api.nvim_buf_is_valid(hint_buf)) then
     hint_buf = api.nvim_create_buf(false, true)
   end
-  local hints = hints_for(outer.width)
+  local hints = hints_for(cols)
   api.nvim_buf_set_lines(hint_buf, 0, -1, false, { hints })
 
-  local width = math.min(vim.fn.strdisplaywidth(hints), outer.width)
+  local width = math.min(vim.fn.strdisplaywidth(hints), cols)
+  local centred = outer.col + math.floor((outer.width - width) / 2)
   hint_win = api.nvim_open_win(hint_buf, false, {
     relative = "editor",
     row = row,
-    col = outer.col + math.floor((outer.width - width) / 2),
+    col = math.max(0, math.min(centred, cols - width)),
     width = width,
     height = 1,
     style = "minimal",
@@ -174,11 +201,11 @@ local function map_tab_keys(buf)
 
   map("<C-t>", M.new_tab, "terminal new tab")
   map("<C-S-\\>", M.next_tab, "terminal next tab")
-  map("<C-S-Left>", function() M.move "left" end, "terminal move float left")
-  map("<C-S-Right>", function() M.move "right" end, "terminal move float right")
-  map("<C-S-Up>", function() M.move "top" end, "terminal move float to top")
-  map("<C-S-Down>", function() M.move "bottom" end, "terminal move float to bottom")
-  map("<C-S-m>", function() M.move "middle" end, "terminal move float to middle")
+  map("<C-S-Left>", function() M.move "left" end, "terminal dock left or move box left")
+  map("<C-S-Right>", function() M.move "right" end, "terminal dock right or move box right")
+  map("<C-S-Up>", function() M.move "top" end, "terminal dock top or move box up")
+  map("<C-S-Down>", function() M.move "bottom" end, "terminal dock bottom or move box down")
+  map("<C-S-m>", M.switch_mode, "terminal switch between docked and floating box")
   map("<C-S-h>", M.toggle_hints, "terminal show or hide key hints")
 end
 
@@ -207,19 +234,58 @@ function M.next_tab()
   show_current()
 end
 
--- Moves the float to a layout, opening it if it's hidden. Lasts until nvim restarts.
-function M.move(name)
-  if not layouts[name] then
-    vim.notify("floatterm: no layout called " .. name, vim.log.levels.WARN)
+-- Applies a new placement, opening the float if it's hidden, unless it would leave
+-- the terminal too small, in which case nothing changes. Lasts until nvim restarts.
+local function place(next)
+  local outer = geometry(next, editor_area())
+  if outer.height - 2 < MIN_ROWS or outer.width - 2 < MIN_COLS then
     return
   end
 
-  layout = name
+  placement = next
   if #bufs == 0 then
     M.new_tab()
   else
     show_current()
   end
+end
+
+local STEPS = { left = { 0, -1 }, right = { 0, 1 }, top = { -1, 0 }, bottom = { 1, 0 } }
+
+-- Docked: docks to `direction` at the large size, or flips between large and small
+-- if it's already docked there. Floating: moves the box one square that way,
+-- stopping at the edge of the grid.
+function M.move(direction)
+  local step = STEPS[direction]
+  if not step then
+    vim.notify("floatterm: no direction called " .. direction, vim.log.levels.WARN)
+    return
+  end
+
+  local next = vim.deepcopy(placement)
+  if next.mode == "dock" then
+    if next.edge == direction then
+      next.size = next.size == "large" and "small" or "large"
+    else
+      next.edge = direction
+      next.size = "large"
+    end
+  else
+    next.cell.row = math.min(2, math.max(0, next.cell.row + step[1]))
+    next.cell.col = math.min(2, math.max(0, next.cell.col + step[2]))
+    if vim.deep_equal(next.cell, placement.cell) then
+      return
+    end
+  end
+
+  place(next)
+end
+
+-- Switches between docked and the floating box, back to wherever each was last.
+function M.switch_mode()
+  local next = vim.deepcopy(placement)
+  next.mode = next.mode == "dock" and "float" or "dock"
+  place(next)
 end
 
 -- Shows or hides the key hints. Lasts until nvim restarts.
@@ -247,15 +313,17 @@ end
 api.nvim_create_user_command("FloatTerm", function(args)
   if args.args == "" then
     M.toggle()
+  elseif args.args == "mode" then
+    M.switch_mode()
   else
     M.move(args.args)
   end
 end, {
   nargs = "?",
   complete = function()
-    return M.layouts
+    return { "left", "right", "top", "bottom", "mode" }
   end,
-  desc = "Toggle the floating terminal, or move it to a layout",
+  desc = "Toggle the floating terminal, move it (as Ctrl+Shift+arrows), or switch mode",
 })
 
 -- Closing the float some other way (:q, say) takes the hints with it.
