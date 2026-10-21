@@ -6,7 +6,7 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
 
 ## What's added
 
-- A floating terminal with tabs, taking the bottom 90% of the screen (`lua/floatterm`)
+- A floating terminal with tabs and rounded corners, leaving 10% of the screen open at the top and a small gap at the sides and bottom (`lua/floatterm`)
   - `<leader>tt` opens it, and `Ctrl+\` (or `Alt+i`) opens or hides it from anywhere, including inside it. Hiding keeps every tab running
   - Inside it, `Ctrl+t` opens a new tab and `Ctrl+|` moves to the next one, wrapping round. `Ctrl+|` needs a terminal app that sends it as its own key rather than as `Ctrl+\`
   - `exit` closes a tab, and closing the last one closes the float

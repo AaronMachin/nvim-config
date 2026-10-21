@@ -24,21 +24,26 @@ local function title()
   return " " .. table.concat(labels, " │ ") .. " "
 end
 
-local HEIGHT = 0.9
+local TOP_GAP = 0.1
+-- A cell is about twice as tall as it is wide, so 2 columns looks like 1 row.
+local SIDE_GAP = 2
+local BOTTOM_GAP = 1
 
--- Full width, the bottom 90% of the editor, sitting just above the statusline.
+-- Leaves 10% of the editor open at the top and a small gap on the other sides,
+-- stopping above the statusline.
 local function float_config()
   local available = vim.o.lines - vim.o.cmdheight - 1
+  local top = math.floor(available * TOP_GAP)
   -- The border adds a row above and below, and a column either side.
-  local outer_height = math.floor(available * HEIGHT)
+  local outer_height = available - top - BOTTOM_GAP
 
   return {
     relative = "editor",
-    border = require("nvconfig").term.float.border,
-    width = vim.o.columns - 2,
+    border = "rounded",
+    width = vim.o.columns - 2 * SIDE_GAP - 2,
     height = outer_height - 2,
-    row = available - outer_height,
-    col = 0,
+    row = top,
+    col = SIDE_GAP,
     title = title(),
     title_pos = "center",
   }
