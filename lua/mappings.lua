@@ -20,5 +20,9 @@ map({ "n", "t" }, "<A-i>", toggle_float_term, { desc = "terminal toggle floating
 map("n", "<leader>fw", function()
   require("grepmask").live_grep()
 end, { desc = "telescope live grep with file mask" })
+map({ "n", "v" }, "<leader>fW", function()
+  require("grepmask").grep_word()
+end, { desc = "telescope grep word under cursor or selection" })
+map("n", "<leader>fr", "<cmd>Telescope resume<CR>", { desc = "telescope reopen last picker" })
 
 -- map({ "n", "i", "v" }, "<C-s>", "<cmd> w <cr>")
