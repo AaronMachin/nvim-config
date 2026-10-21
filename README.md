@@ -6,7 +6,7 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
 
 ## What's added
 
-- `<leader>tt` opens and closes a floating terminal (same as NvChad's `Alt+i`, which needs Option set as Alt in the terminal app)
+- `<leader>tt` opens a floating terminal and `Ctrl+\` opens or closes it from anywhere, including inside it (same as NvChad's `Alt+i`, which needs Option set as Alt in the terminal app)
 - `<leader>fw` is live grep with IntelliJ-style file masks (`lua/grepmask`)
   - `Ctrl+f` in the picker sets the mask, e.g. `*.php, !*Test.php, !vendor/**`. An empty mask clears it
   - `Ctrl+g` picks from recently used masks
