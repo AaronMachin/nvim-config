@@ -138,7 +138,8 @@ function M.live_grep(default_text)
   require("telescope.builtin").live_grep {
     default_text = default_text,
     glob_pattern = parse_mask(mask),
-    prompt_title = mask and ("Live Grep [" .. mask .. "]") or "Live Grep",
+    -- The hint lives in the prompt title: NvChad's theme hides the results title.
+    prompt_title = (mask and ("Live Grep [" .. mask .. "]") or "Live Grep") .. " · C-f mask · C-g recent",
     attach_mappings = function(prompt_bufnr, map)
       for _, mode in ipairs { "i", "n" } do
         map(mode, "<C-f>", function()
