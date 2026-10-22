@@ -11,7 +11,8 @@ M.defaults = {
   -- Where the tab bar sits inside the float: "left", "top" or "off".
   tabbar = "left",
   tabbar_width = 28,
-  -- Where the float opens in a new nvim: "bottom", "top", "left", "right" or "box".
+  -- Where the terminal opens in a new nvim: "bottom", "top", "left", "right", "box"
+  -- or "split" (a split beside the code).
   start_position = "bottom",
   -- Docked, the float takes this share of the editor's height (top/bottom) or width
   -- (left/right).

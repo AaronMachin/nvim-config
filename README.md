@@ -8,19 +8,20 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
 
 - A floating terminal with tabs and rounded corners, leaving 10% of the screen open at the top and a small gap at the sides and bottom (`lua/floatterm`)
   - `<leader>tt` opens it, and `Ctrl+\` (or `Alt+i`) opens or hides it from anywhere, including inside it. Hiding keeps every tab running
-  - Inside it, `Ctrl+t` opens a new tab and `Ctrl+|` moves to the next one, wrapping round. `Ctrl+|` needs a terminal app that sends it as its own key rather than as `Ctrl+\`
+  - Inside it, `Ctrl+t` opens a new tab, and `Ctrl+Shift+n` / `Ctrl+Shift+p` move to the next and previous one (`Ctrl+|` also moves to the next, in a terminal app that sends it as its own key)
   - `exit` closes a tab, and closing the last one closes the float
   - With the tab bar on (left or top), each Claude tab shows its state first (`● needs you`, `◌ working · 4m`, `✓ done`), then what it's working on, then its folder. Shell tabs show their folder and what's running. Click a tab to open it
-  - `Ctrl+Shift+b` moves into the bar: `j/k` move, `Enter` opens, `x` closes (asks first for Claude or a running command), `r` renames, `Esc` goes back
+  - `Ctrl+Shift+b` moves into the bar: `j/k` move, `Enter` opens, `x` closes (asks first for Claude or a running command), `1`-`9` open that tab, `r` renames, `Esc` goes back
   - Opening the float goes to a tab whose Claude needs you, and you get a one-off notification when one starts waiting
   - `Ctrl+Shift+f` goes full-screen and back. An arrow key from full-screen docks to that edge, and `Ctrl+Shift+g` goes to the box
   - `:FloatTermSettings`, or `Ctrl+Shift+,` inside the terminal, opens a page with every setting. `j/k` move, `←/→` change, `Enter` cycles a choice or lets you type a number, `Tab` picks large or small on the docked sizes row, `q` closes. Changes apply straight away and are kept in `~/.local/share/nvim/floatterm-settings.json`. Starting position applies from the next nvim
   - With "reopen tabs" on, quitting nvim started in a folder saves its tabs, and starting nvim there again reopens them in the background: Claude tabs resume their conversation and shell tabs come back as fresh shells (nothing is re-run). A Claude tab with no conversation yet starts fresh, and one that can't be resumed is kept and tried once more. Only the first nvim in a folder reopens and saves its tabs, and opening nvim on a file (or headless) doesn't save or restore
   - `Ctrl+x` turns the terminal into a normal buffer for scrolling, searching and copying (`y` goes to the system clipboard). `i` goes back to typing
-  - Docked (the default), `Ctrl+Shift+←/→/↑/↓` docks it to that edge at 90% of the screen. Pressing the same arrow again flips it between 90% and a 20% strip
+  - Docked (the default), `Ctrl+Shift+←/→/↑/↓` (or `Ctrl+Shift+h/l/k/j`, for terminal apps that keep the arrows) docks it to that edge at 90% of the screen. Pressing the same arrow again flips it between 90% and a 20% strip
+  - `Ctrl+Shift+d` takes the terminal out of the float into a real split beside the code, with the same tabs and the tab bar inside it. The same keys move it to another edge or flip its size, and it always leaves the code at least 20 columns or 5 rows. `Ctrl+\` then moves between the code and the terminal, and `Ctrl+Shift+d` again goes back to floating
   - `Ctrl+Shift+g` switches to a floating box a ninth of the screen, and the arrows then move it a square at a time round a 3×3 grid, stopping at the edges. `Ctrl+Shift+g` again docks it back where it was (not `Ctrl+Shift+m`, which nvim reads as Shift+Enter)
-  - A move that would leave the terminal under 5 rows or 20 columns does nothing. `:FloatTerm left|right|top|bottom|mode|full` does the same as the keys. Where it sits lasts until nvim restarts
-  - A line of key hints sits in the gap above or below it (or in its bottom border when there's no gap). `Ctrl+Shift+h` hides or shows them
+  - A move that would leave the terminal under 5 rows or 20 columns does nothing. `:FloatTerm left|right|top|bottom|mode|full|split` does the same as the keys. Where it sits lasts until nvim restarts
+  - A line of key hints sits in the gap above or below it (or in its bottom border when there's no gap). The settings page hides or shows them. A split has none
 - `<leader>fw` is live grep with IntelliJ-style file masks and search options (`lua/grepmask`)
   - `Ctrl+f` switches the search box to the mask, e.g. `*.php, !*Test.php, !vendor/**`, and results follow as you type. Recent masks show over the preview, and `↑/↓` tries each one. `Enter` or `Ctrl+f` keeps the mask and goes back to the search text. An empty mask clears it
   - Each project (git root) remembers its own mask. Masks are kept in `~/.local/share/nvim/grepmask.json`

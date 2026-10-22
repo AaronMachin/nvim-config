@@ -33,7 +33,7 @@ local ROWS = {
   {
     key = "start_position",
     label = "Starting position",
-    choices = { { "bottom", "bottom" }, { "top", "top" }, { "left", "left" }, { "right", "right" }, { "box", "box" } },
+    choices = { { "bottom", "bottom" }, { "top", "top" }, { "left", "left" }, { "right", "right" }, { "box", "box" }, { "split", "split" } },
     -- The float only reads it when nvim starts.
     note = "from the next nvim",
   },

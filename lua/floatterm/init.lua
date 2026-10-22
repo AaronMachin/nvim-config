@@ -5,7 +5,8 @@
 -- needs you. A tab closes when its job exits.
 --
 -- The float is docked to an edge of the editor, floating in one square of a 3x3 grid,
--- or full-screen. A line of key hints sits in the gap above or below it, or in its
+-- or full-screen. Or the terminal leaves the float and becomes a real split beside
+-- the code (`split` placement), moved and sized by the same keys. A line of key hints sits in the gap above or below it, or in its
 -- bottom border when there's no gap. With the tab bar on (settings), part of the float
 -- is kept for it and lua/floatterm/tabbar draws it.
 --
@@ -36,6 +37,9 @@ local tabs = {}
 local current = 0
 local next_id = 1
 local win = nil
+-- In split placement, an empty window kept beside the terminal for the tab bar to
+-- draw over, so the bar takes space from the split rather than covering it.
+local bar_win = nil
 local hint_win = nil
 local hint_buf = nil
 local hints_shown = settings.get "hints"
@@ -44,8 +48,17 @@ local extra_keys = {}
 
 local function start_placement()
   local start = settings.get "start_position"
-  local placement = { mode = "dock", edge = "bottom", size = "large", cell = { row = 1, col = 1 }, full = false }
-  if start == "box" then
+  local placement = {
+    mode = "dock",
+    edge = "bottom",
+    size = "large",
+    cell = { row = 1, col = 1 },
+    full = false,
+    split = { on = false, edge = "bottom", size = "small" },
+  }
+  if start == "split" then
+    placement.split.on = true
+  elseif start == "box" then
     placement.mode = "float"
   elseif start == "top" or start == "left" or start == "right" then
     placement.edge = start
@@ -55,12 +68,14 @@ end
 
 -- Where the float is. Docked, `edge` and `size` apply; floating, `cell` does (0-2 each
 -- way, starting in the centre). Both are kept so switching back returns to the last
--- spot, and `full` sits on top of either.
+-- spot, and `full` sits on top of either. With split.on, the terminal is a real split
+-- at split.edge taking split.size of the editor, and the float's spot is kept for
+-- when it goes back.
 local placement = start_placement()
 
-local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+| next tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows move/resize · Ctrl+Shift+g dock/box · Ctrl+Shift+f full-screen · Ctrl+Shift+h hide hints"
+local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows or h/j/k/l move/resize · Ctrl+Shift+g dock/box · Ctrl+Shift+d split · Ctrl+Shift+f full-screen · Ctrl+Shift+n/p next/previous tab"
 -- For when the full line won't fit, such as the bottom border of a narrow float.
-local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-g mode · C-S-f full · C-S-h hints"
+local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-g mode · C-S-d split · C-S-f full · C-S-n/p tabs"
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
 local function hints_for(width)
@@ -178,6 +193,46 @@ local function win_is_open()
   return win ~= nil and api.nvim_win_is_valid(win)
 end
 
+local function is_split_window(w)
+  return w ~= nil and api.nvim_win_is_valid(w) and api.nvim_win_get_config(w).relative == ""
+end
+
+local SPLIT_SIDES = { bottom = "below", top = "above", left = "left", right = "right" }
+
+-- The terminal split's size for a placement: rows for top/bottom, columns for
+-- left/right, as a share of the editor.
+local function split_size(p)
+  local rows, cols = editor_area()
+  local horizontal = p.split.edge == "top" or p.split.edge == "bottom"
+  local total = horizontal and rows or cols
+  -- The code beside it keeps the terminal's own minimum, so 90% of a narrow editor
+  -- doesn't leave it a column wide.
+  local keep = horizontal and MIN_ROWS + 1 or MIN_COLS + 1
+  return math.min(math.floor(total * settings.get("dock_sizes")[p.split.size]), total - keep), horizontal
+end
+
+-- The split's windows as boxes (the same shape as the float's, for the tab bar):
+-- terminal, plus tabbar when the bar has its window.
+local function split_boxes()
+  local function box_of(w)
+    local pos = api.nvim_win_get_position(w)
+    return { row = pos[1], col = pos[2], height = api.nvim_win_get_height(w), width = api.nvim_win_get_width(w) }
+  end
+  local terminal = box_of(win)
+  local tabbar = bar_win and api.nvim_win_is_valid(bar_win) and box_of(bar_win) or nil
+  return { outer = terminal, terminal = terminal, tabbar = tabbar }
+end
+
+local function close_split_windows()
+  if bar_win and api.nvim_win_is_valid(bar_win) then
+    pcall(api.nvim_win_close, bar_win, true)
+  end
+  bar_win = nil
+  if is_split_window(win) then
+    pcall(api.nvim_win_close, win, true)
+  end
+end
+
 local function index_of(buf)
   for i, record in ipairs(tabs) do
     if record.buf == buf then
@@ -240,6 +295,9 @@ end
 -- wider than the float (a floating box is a third of the editor), but stays on screen.
 local function show_hints()
   close_hints()
+  if placement.split.on then
+    return
+  end
 
   local _, cols = editor_area()
   local outer = boxes().outer
@@ -271,16 +329,110 @@ end
 
 -- Re-applies the layout to an open float, after a move, a resize or a settings change.
 local function relayout()
-  if win_is_open() then
+  if placement.split.on then
+    if is_split_window(win) then
+      local size, horizontal = split_size(placement)
+      if horizontal then
+        api.nvim_win_set_height(win, math.max(MIN_ROWS, size))
+      else
+        api.nvim_win_set_width(win, math.max(MIN_COLS, size))
+      end
+    end
+  elseif win_is_open() then
     api.nvim_win_set_config(win, float_config())
     show_hints()
   end
   fire("FloatTermLayoutChanged", { open = win_is_open() })
 end
 
+local function apply_winopts(w)
+  for option, value in pairs(require("nvconfig").term.winopts) do
+    vim.wo[w][option] = value
+  end
+end
+
+-- Opens the terminal as a real split at split.edge, from a normal window, with an
+-- empty window beside it for the tab bar when the bar is on and fits.
+local function open_split(buf)
+  local size, horizontal = split_size(placement)
+  local edge = { split = SPLIT_SIDES[placement.split.edge], win = -1 }
+  if horizontal then
+    edge.height = size
+  else
+    edge.width = size
+  end
+
+  local bar = settings.get "tabbar"
+  local fits = split({
+    row = 0,
+    col = 0,
+    height = (horizontal and size or select(1, editor_area())) + 2,
+    width = (horizontal and vim.o.columns or size) + 2,
+  })
+
+  if not fits.tabbar then
+    win = api.nvim_open_win(buf, true, edge)
+  else
+    -- The bar's window opens first as the whole split, and the terminal inside it, so
+    -- the two share the split's room and the code beside it keeps its own.
+    local scratch = api.nvim_create_buf(false, true)
+    vim.bo[scratch].bufhidden = "wipe"
+    bar_win = api.nvim_open_win(scratch, false, edge)
+    win = api.nvim_open_win(buf, true, { split = bar == "left" and "right" or "below", win = bar_win })
+    if bar == "left" then
+      api.nvim_win_set_width(bar_win, fits.tabbar.width)
+    else
+      api.nvim_win_set_height(bar_win, 1)
+    end
+    for option, value in pairs {
+      winfixwidth = true,
+      winfixheight = true,
+      number = false,
+      relativenumber = false,
+      signcolumn = "no",
+      foldcolumn = "0",
+      cursorline = false,
+      statuscolumn = "",
+      winbar = "",
+    } do
+      vim.wo[bar_win][option] = value
+    end
+  end
+
+  apply_winopts(win)
+  vim.wo[win].winfixheight = horizontal
+  vim.wo[win].winfixwidth = not horizontal
+end
+
 -- Puts the current tab's buffer in the float, opening the float if it's hidden.
 local function show_current()
   local buf = tabs[current].buf
+
+  if placement.split.on then
+    close_hints()
+    if win_is_open() and not is_split_window(win) then
+      -- The float, from before switching to the split.
+      api.nvim_win_close(win, true)
+      win = nil
+    end
+    if not is_split_window(win) then
+      open_split(buf)
+    else
+      api.nvim_win_set_buf(win, buf)
+    end
+    -- Without the bar there's no border title, so the tabs go in the winbar.
+    vim.wo[win].winbar = bar_win and "" or title({}):gsub("%%", "%%%%")
+    api.nvim_set_current_win(win)
+    vim.cmd "startinsert"
+    fire("FloatTermLayoutChanged", { open = true })
+    fire "FloatTermTabsChanged"
+    return
+  end
+
+  if is_split_window(win) then
+    close_split_windows()
+    win = nil
+  end
 
   if win_is_open() then
     api.nvim_win_set_buf(win, buf)
@@ -301,7 +453,9 @@ end
 
 local function hide()
   close_hints()
-  if win_is_open() then
+  if is_split_window(win) then
+    close_split_windows()
+  elseif win_is_open() then
     api.nvim_win_close(win, true)
   end
   win = nil
@@ -315,14 +469,23 @@ local function map_tab_keys(buf)
 
   map("<C-t>", M.new_tab, "terminal new tab")
   map("<C-S-\\>", M.next_tab, "terminal next tab")
-  map("<C-S-Left>", function() M.move "left" end, "terminal dock left or move box left")
-  map("<C-S-Right>", function() M.move "right" end, "terminal dock right or move box right")
-  map("<C-S-Up>", function() M.move "top" end, "terminal dock top or move box up")
-  map("<C-S-Down>", function() M.move "bottom" end, "terminal dock bottom or move box down")
+  map("<C-S-n>", M.next_tab, "terminal next tab")
+  map("<C-S-p>", M.previous_tab, "terminal previous tab")
+  -- h/j/k/l as well as the arrows: some terminal apps keep Ctrl+Shift+left/right.
+  for _, keys in ipairs {
+    { "<C-S-Left>", "<C-S-h>", "left" },
+    { "<C-S-Right>", "<C-S-l>", "right" },
+    { "<C-S-Up>", "<C-S-k>", "top" },
+    { "<C-S-Down>", "<C-S-j>", "bottom" },
+  } do
+    for i = 1, 2 do
+      map(keys[i], function() M.move(keys[3]) end, "terminal move " .. keys[3] .. " (or resize at that edge)")
+    end
+  end
+  map("<C-S-d>", M.toggle_split, "terminal switch between floating and a split")
   -- Not Ctrl+Shift+m: Neovim reads that as Shift+Enter, which Claude needs for new lines.
   map("<C-S-g>", M.switch_mode, "terminal switch between docked and floating box")
   map("<C-S-f>", M.toggle_fullscreen, "terminal full-screen on or off")
-  map("<C-S-h>", M.toggle_hints, "terminal show or hide key hints")
   for _, key in ipairs(extra_keys) do
     map(key[1], key[2], key[3])
   end
@@ -474,7 +637,8 @@ end
 -- The current boxes (see `boxes`), whether or not the float is open, plus `open` and
 -- `full`. lua/floatterm/tabbar draws into `tabbar`.
 function M.layout()
-  local layout = boxes()
+  local layout = (placement.split.on and is_split_window(win)) and split_boxes() or boxes()
+  layout.split = placement.split.on
   layout.open = win_is_open()
   layout.full = placement.full
   return layout
@@ -493,14 +657,36 @@ function M.next_tab()
   show_current()
 end
 
--- Applies a new placement, opening the float if it's hidden, unless it would leave
--- the terminal too small, in which case nothing changes. Lasts until nvim restarts.
-local function place(next)
-  local box = boxes(next).terminal
-  if box.height - 2 < MIN_ROWS or box.width - 2 < MIN_COLS then
+function M.previous_tab()
+  if #tabs < 2 then
     return
   end
 
+  current = (current - 2) % #tabs + 1
+  show_current()
+end
+
+-- Applies a new placement, opening the float if it's hidden, unless it would leave
+-- the terminal too small, in which case nothing changes. Lasts until nvim restarts.
+local function place(next)
+  if next.split.on then
+    local size, horizontal = split_size(next)
+    local rows, cols = editor_area()
+    if (horizontal and size or rows) < MIN_ROWS or (horizontal and cols or size) < MIN_COLS then
+      return
+    end
+  else
+    local box = boxes(next).terminal
+    if box.height - 2 < MIN_ROWS or box.width - 2 < MIN_COLS then
+      return
+    end
+  end
+
+  -- A split moving edge or size is simplest closed and opened again; the tabs keep running.
+  if placement.split.on and is_split_window(win) and not vim.deep_equal(placement.split, next.split) then
+    close_split_windows()
+    win = nil
+  end
   placement = next
   if #tabs == 0 then
     M.new_tab()
@@ -522,7 +708,15 @@ function M.move(direction)
   end
 
   local next = vim.deepcopy(placement)
-  if next.full then
+  if next.split.on then
+    -- As docked: the edge it's on flips its size, another edge moves it there. It keeps
+    -- its size when it moves, as a split at 90% would leave little room for the code.
+    if next.split.edge == direction then
+      next.split.size = next.split.size == "large" and "small" or "large"
+    else
+      next.split.edge = direction
+    end
+  elseif next.full then
     next.full = false
     next.mode = "dock"
     next.edge = direction
@@ -549,7 +743,11 @@ end
 -- From full-screen it goes to the box.
 function M.switch_mode()
   local next = vim.deepcopy(placement)
-  if next.full then
+  if next.split.on then
+    next.split.on = false
+    next.full = false
+    next.mode = "float"
+  elseif next.full then
     next.full = false
     next.mode = "float"
   else
@@ -561,7 +759,15 @@ end
 -- Full-screen on or off; off returns to where the float was. Not kept across restarts.
 function M.toggle_fullscreen()
   local next = vim.deepcopy(placement)
-  next.full = not next.full
+  next.full = next.split.on or not next.full
+  next.split.on = false
+  place(next)
+end
+
+-- Between the float (where it last was) and a split beside the code.
+function M.toggle_split()
+  local next = vim.deepcopy(placement)
+  next.split.on = not next.split.on
   place(next)
 end
 
@@ -585,6 +791,25 @@ end
 -- Hides the float, or opens it: on a tab that needs you if there is one, else on the
 -- tab last shown.
 function M.toggle()
+  if placement.split.on and is_split_window(win) then
+    -- The split stays; this moves between it and the code.
+    if api.nvim_get_current_win() ~= win then
+      current = waiting_tab() or current
+      show_current()
+      return
+    end
+    vim.cmd "wincmd p"
+    if api.nvim_get_current_win() == win or api.nvim_get_current_win() == bar_win then
+      for _, w in ipairs(api.nvim_tabpage_list_wins(0)) do
+        if w ~= win and w ~= bar_win and is_split_window(w) then
+          api.nvim_set_current_win(w)
+          break
+        end
+      end
+    end
+    return
+  end
+
   if win_is_open() then
     hide()
     return
@@ -605,13 +830,15 @@ api.nvim_create_user_command("FloatTerm", function(args)
     M.switch_mode()
   elseif args.args == "full" then
     M.toggle_fullscreen()
+  elseif args.args == "split" then
+    M.toggle_split()
   else
     M.move(args.args)
   end
 end, {
   nargs = "?",
   complete = function()
-    return { "left", "right", "top", "bottom", "mode", "full" }
+    return { "left", "right", "top", "bottom", "mode", "full", "split" }
   end,
   desc = "Toggle the floating terminal, move it (as Ctrl+Shift+arrows), switch mode or go full-screen",
 })
@@ -619,17 +846,44 @@ end, {
 -- Closing the float some other way (:q, say) takes the hints with it.
 api.nvim_create_autocmd("WinClosed", {
   callback = function(args)
-    if win and tonumber(args.match) == win then
+    local closed = tonumber(args.match)
+    if bar_win and closed == bar_win then
+      bar_win = nil
+    end
+    if win and closed == win then
       close_hints()
       win = nil
+      -- The bar's window means nothing without the split beside it. Only that bar: by
+      -- the time this runs a new split may have opened with a bar of its own, so the
+      -- event says whether the terminal is open then rather than assuming not.
+      local orphan = bar_win
       vim.schedule(function()
-        fire("FloatTermLayoutChanged", { open = false })
+        if orphan and api.nvim_win_is_valid(orphan) and orphan ~= bar_win then
+          pcall(api.nvim_win_close, orphan, true)
+        elseif orphan and orphan == bar_win and not win_is_open() then
+          pcall(api.nvim_win_close, orphan, true)
+          bar_win = nil
+        end
+        fire("FloatTermLayoutChanged", { open = win_is_open() })
       end)
     end
   end,
 })
 
 api.nvim_create_autocmd("VimResized", { callback = relayout })
+-- The split's bar window is only somewhere for the tab bar to draw; moving into it
+-- (Ctrl+w, a click) lands in the terminal instead.
+api.nvim_create_autocmd("WinEnter", {
+  callback = function()
+    if bar_win and api.nvim_get_current_win() == bar_win and is_split_window(win) then
+      vim.schedule(function()
+        if api.nvim_win_is_valid(win) then
+          api.nvim_set_current_win(win)
+        end
+      end)
+    end
+  end,
+})
 -- The tab line coming or going moves the area the float sits in.
 api.nvim_create_autocmd({ "TabEnter", "TabClosed" }, { callback = relayout })
 api.nvim_create_autocmd("OptionSet", { pattern = "showtabline", callback = relayout })

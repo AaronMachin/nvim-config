@@ -607,6 +607,15 @@ function M.map_bar_keys(buf)
   map("l", function() select(1) end, "tab bar next tab")
   map("h", function() select(-1) end, "tab bar previous tab")
   map("<CR>", open_selected, "tab bar open tab")
+  for n = 1, 9 do
+    map(tostring(n), function()
+      local record = require("floatterm").tabs()[n]
+      if record then
+        leave()
+        require("floatterm").focus_buf(record.buf)
+      end
+    end, "tab bar open tab " .. n)
+  end
   map("x", close_selected, "tab bar close tab")
   map("r", rename_selected, "tab bar rename tab")
   map("<Esc>", leave, "tab bar back to the terminal")
