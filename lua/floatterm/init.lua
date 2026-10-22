@@ -13,6 +13,8 @@ local M = {}
 local api = vim.api
 
 local bufs = {}
+-- Optional short names shown next to a tab's number, keyed by buffer.
+local labels = {}
 local current = 0
 local win = nil
 local hint_win = nil
@@ -100,11 +102,12 @@ local function win_is_open()
 end
 
 local function title()
-  local labels = {}
-  for i = 1, #bufs do
-    labels[i] = i == current and ("[" .. i .. "]") or tostring(i)
+  local names = {}
+  for i, buf in ipairs(bufs) do
+    local name = labels[buf] and (i .. " " .. labels[buf]) or tostring(i)
+    names[i] = i == current and ("[" .. name .. "]") or name
   end
-  return " " .. table.concat(labels, " │ ") .. " "
+  return " " .. table.concat(names, " │ ") .. " "
 end
 
 local function float_config()
@@ -210,10 +213,13 @@ local function map_tab_keys(buf)
 end
 
 -- Opens a tab running `argv` (a shell by default). The tab closes when it exits.
--- Returns the tab's terminal job id.
-function M.new_tab(argv)
+-- opts: cwd and env for the job, and label, a short name shown in the title.
+-- Returns the tab's terminal job id and its buffer.
+function M.new_tab(argv, opts)
+  opts = opts or {}
   local buf = api.nvim_create_buf(false, true)
   table.insert(bufs, buf)
+  labels[buf] = opts.label
   current = #bufs
 
   show_current()
@@ -221,18 +227,46 @@ function M.new_tab(argv)
   api.nvim_buf_call(buf, function()
     -- A bare { shell } is deleted by Neovim's own TermClose handler before ours
     -- runs, taking the float with it. -i is what the shell would be anyway.
-    job = vim.fn.termopen(type(argv) == "table" and argv or { vim.o.shell, "-i" })
+    -- detach is set so the table is never empty, which termopen would read as a list.
+    job = vim.fn.termopen(type(argv) == "table" and argv or { vim.o.shell, "-i" }, {
+      detach = false,
+      cwd = opts.cwd,
+      env = opts.env,
+    })
   end)
   map_tab_keys(buf)
   -- termopen renames the buffer, so the title is set again after it.
   show_current()
-  return job
+  return job, buf
 end
 
 -- Opens a shell tab and types `command` into it, so the shell stays open afterwards
--- with the output to read.
-function M.run_in_tab(command)
-  api.nvim_chan_send(M.new_tab(), command .. "\n")
+-- with the output to read. opts as for new_tab.
+function M.run_in_tab(command, opts)
+  local job, buf = M.new_tab(nil, opts)
+  api.nvim_chan_send(job, command .. "\n")
+  return job, buf
+end
+
+-- Shows the tab holding `buf`, opening the float if it's hidden. False if no tab does.
+function M.focus_buf(buf)
+  for i, tab_buf in ipairs(bufs) do
+    if tab_buf == buf then
+      current = i
+      show_current()
+      return true
+    end
+  end
+  return false
+end
+
+-- True when the float is open and showing `buf`.
+function M.is_showing(buf)
+  return win_is_open() and bufs[current] == buf
+end
+
+function M.hide()
+  hide()
 end
 
 function M.next_tab()
@@ -369,6 +403,7 @@ api.nvim_create_autocmd("TermClose", {
 
     vim.schedule(function()
       table.remove(bufs, index)
+      labels[args.buf] = nil
 
       if #bufs == 0 then
         current = 0
