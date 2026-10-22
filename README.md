@@ -23,4 +23,15 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
   - `Ctrl+↑/↓` steps through earlier searches, `Ctrl+Space` filters the current results without searching again, and `Ctrl+q` sends them to the quickfix list (then `:cdo s/old/new/gc | update` replaces across them)
 - `<leader>fW` greps the word under the cursor as a whole word, or the selected text in visual mode
 - `<leader>fr` reopens the last picker where you left it
-- git-blame.nvim shows the blame for the current line
+- Git, on `<leader>g` (`lua/gitkeys`)
+  - `<leader>gg` opens lazygit in a floating-terminal tab, which closes when you quit lazygit
+  - `<leader>gs` status, `<leader>gb` branches (Enter switches), `<leader>gc` commits, `<leader>gf` this file's history
+  - `]h` / `[h` jump between changed blocks. `<leader>gp` previews the block under the cursor, `<leader>ga` stages it (or the selected lines), `<leader>gr` undoes it (`u` brings it back), and `<leader>gd` diffs the file against the last commit
+  - `<leader>gv` opens diffview with everything the branch changes since it left the default branch. Pressing it again closes it
+  - `<leader>go` opens the file at the cursor's line (or the selection) on GitHub, on the current branch, which has to be pushed
+  - git-blame.nvim shows the blame for the current line
+- Language servers for PHP (intelephense), Vue (vue-language-server 2.2.8, with ts_ls for the TypeScript inside .vue files), TypeScript, HTML, CSS and JSON. NvChad's keys apply: `gd` definition, `gr` references, `<leader>ra` rename, `<leader>ca` code actions
+  - Install them on a new machine with `:MasonInstall intelephense typescript-language-server vue-language-server@2.2.8 html-lsp css-lsp json-lsp`. Keep Vue on 2.x: 3.x needs a newer lspconfig than `lazy-lock.json` holds
+- Treesitter parsers for PHP, Vue, TypeScript, JavaScript, JSON, YAML, Markdown, SQL, Dockerfile and bash. There's no Blade parser in this nvim-treesitter version
+- Format on save with each project's own tools, only where the project has them: its `vendor/bin/pint` for PHP, its `eslint --fix` for JS/TS/Vue (Prettier instead where there's a Prettier config but no ESLint one), and Prettier for CSS, JSON and YAML where there's a Prettier config. It runs after the write, so saving isn't held up
+- Pest tests in a floating-terminal tab, through Sail when the project has it (`lua/testrun`): `<leader>tn` runs the `it()`/`test()` at or above the cursor, `<leader>tf` the file, `<leader>tl` the last run again

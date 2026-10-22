@@ -209,20 +209,30 @@ local function map_tab_keys(buf)
   map("<C-S-h>", M.toggle_hints, "terminal show or hide key hints")
 end
 
-function M.new_tab()
+-- Opens a tab running `argv` (a shell by default). The tab closes when it exits.
+-- Returns the tab's terminal job id.
+function M.new_tab(argv)
   local buf = api.nvim_create_buf(false, true)
   table.insert(bufs, buf)
   current = #bufs
 
   show_current()
+  local job
   api.nvim_buf_call(buf, function()
     -- A bare { shell } is deleted by Neovim's own TermClose handler before ours
     -- runs, taking the float with it. -i is what the shell would be anyway.
-    vim.fn.termopen { vim.o.shell, "-i" }
+    job = vim.fn.termopen(type(argv) == "table" and argv or { vim.o.shell, "-i" })
   end)
   map_tab_keys(buf)
   -- termopen renames the buffer, so the title is set again after it.
   show_current()
+  return job
+end
+
+-- Opens a shell tab and types `command` into it, so the shell stays open afterwards
+-- with the output to read.
+function M.run_in_tab(command)
+  api.nvim_chan_send(M.new_tab(), command .. "\n")
 end
 
 function M.next_tab()

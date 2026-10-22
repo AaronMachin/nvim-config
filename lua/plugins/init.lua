@@ -1,7 +1,7 @@
 return {
   {
     "stevearc/conform.nvim",
-    -- event = 'BufWritePre', -- uncomment for format on save
+    event = "BufWritePre",
     opts = require "configs.conform",
   },
 
@@ -10,6 +10,38 @@ return {
     config = function()
       require "configs.lspconfig"
     end,
+  },
+
+  {
+    "nvim-treesitter/nvim-treesitter",
+    opts = {
+      ensure_installed = {
+        "vim",
+        "lua",
+        "vimdoc",
+        "html",
+        "css",
+        "php",
+        "phpdoc",
+        "vue",
+        "typescript",
+        "javascript",
+        "tsx",
+        "json",
+        "yaml",
+        "bash",
+        "markdown",
+        "markdown_inline",
+        "dockerfile",
+        "sql",
+        "regex",
+      },
+    },
+  },
+
+  {
+    "sindrets/diffview.nvim",
+    cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewFileHistory" },
   },
 
   {
@@ -22,14 +54,4 @@ return {
       virtual_text_column = 1,
     },
   },
-
-  -- {
-  -- 	"nvim-treesitter/nvim-treesitter",
-  -- 	opts = {
-  -- 		ensure_installed = {
-  -- 			"vim", "lua", "vimdoc",
-  --      "html", "css"
-  -- 		},
-  -- 	},
-  -- },
 }
