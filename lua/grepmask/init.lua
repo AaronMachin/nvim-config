@@ -24,7 +24,6 @@ M.default_excludes = {
   "!*.svg",
   "!*.min.*",
   "!*.map",
-  "!api.json",
   "!**/generated/**",
   "!*.generated.*",
   "!frontend/design-system/**",
@@ -152,8 +151,9 @@ local function title(session)
   if session.options.regex then
     table.insert(parts, "[.*]")
   end
-  if not session.use_defaults then
-    table.insert(parts, "[no default excludes]")
+  -- Shown while files are being left out, so an empty search doesn't look conclusive.
+  if session.use_defaults then
+    table.insert(parts, "[default excludes]")
   end
   return table.concat(parts, " ")
 end
