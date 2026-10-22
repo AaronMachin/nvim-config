@@ -24,22 +24,30 @@ local function project_root()
   return vim.fs.root(file ~= "" and file or vim.uv.cwd(), { "phpstan.neon", "phpstan.neon.dist" })
 end
 
--- Raw format is one error a line: "<file>:<line>:<message>", with "?:?:" for errors
--- that aren't about a file (bad config, say).
+-- Raw format is one error a line: "<file>:<line>:<message>". The line is "?" for an
+-- error PHPStan can't place in the file, and the file is "?" too when it isn't about a
+-- file at all (bad config, say). Errors in a trait name the class they were checked
+-- for after the path, "<file> (in context of class App\Models\Site)", which goes
+-- on the end of the message so the path is one the quickfix list can open.
 function M.parse(output, root)
   local items = {}
   for _, line in ipairs(vim.split(output, "\n", { trimempty = true })) do
-    local file, lnum, text = line:match "^(.-):(%d+):(.*)$"
-    if file then
+    -- The first ":<line>:" ends the path, as the message can have colons of its own.
+    local file, lnum, text = line:match "^(.-):([%d?]+):(.*)$"
+    if file and file ~= "?" then
+      text = vim.trim(text)
+      local path, context = file:match "^(.-)%s+%((in context of .-)%)$"
+      if path then
+        file = path
+        text = text .. " (" .. context .. ")"
+      end
       if file:sub(1, #CONTAINER_ROOT + 1) == CONTAINER_ROOT .. "/" then
         file = root .. file:sub(#CONTAINER_ROOT + 1)
       end
-      table.insert(items, { filename = file, lnum = tonumber(lnum), text = vim.trim(text) })
-    else
-      local general = line:match "^%?:%?:(.*)$"
-      if general then
-        table.insert(items, { text = vim.trim(general) })
-      end
+      -- No line means the top of the file, so the entry still opens it.
+      table.insert(items, { filename = file, lnum = tonumber(lnum) or 1, text = text })
+    elseif file then
+      table.insert(items, { text = vim.trim(text) })
     end
   end
   return items

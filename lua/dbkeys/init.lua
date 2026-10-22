@@ -15,8 +15,9 @@ local function project_root()
   return vim.fs.root(start, ".git")
 end
 
--- KEY=value lines, with quotes taken off and comments skipped. Variables inside
--- values (${APP_NAME}) aren't expanded, as none of the DB_* ones use them.
+-- KEY=value lines, with quotes taken off and comments skipped, including one after
+-- the value (DB_PASSWORD="s3cret" # dev only). Variables inside values (${APP_NAME})
+-- aren't expanded, as none of the DB_* ones use them.
 function M.read_env(path)
   local ok, lines = pcall(vim.fn.readfile, path)
   if not ok then
@@ -30,16 +31,80 @@ function M.read_env(path)
       key, value = line:match "^%s*([%w_]+)%s*=%s*(.-)%s*$"
     end
     if key then
-      local quoted = value:match '^"(.*)"$' or value:match "^'(.*)'$"
+      -- A quoted value can hold " #", so its comment only starts after the closing quote.
+      local quoted = value:match '^"(.*)"$'
+        or value:match "^'(.*)'$"
+        or value:match '^"(.-)"%s+#'
+        or value:match "^'(.-)'%s+#"
       if quoted then
         value = quoted
       else
-        value = value:gsub("%s+#.*$", "")
+        value = value:gsub("^#.*$", ""):gsub("%s+#.*$", "")
       end
       env[key] = value
     end
   end
   return env
+end
+
+local function real(path)
+  return vim.uv.fs_realpath(path) or path
+end
+
+-- The main checkout a worktree belongs to (the folder holding the shared .git).
+local function main_checkout(root)
+  local result = vim.system({ "git", "rev-parse", "--path-format=absolute", "--git-common-dir" }, { cwd = root }):wait()
+  if result.code ~= 0 then
+    return nil
+  end
+  return real(vim.fs.dirname(vim.trim(result.stdout)))
+end
+
+-- The folder the running Sail app (the laravel.test container) was started from, for
+-- the project at `root`, or nil when none is running. Worktrees usually share main's
+-- Sail rather than running their own, so this is often not `root` itself: it's
+-- `root` if that runs Sail, else the main checkout, else another worktree of the
+-- same repository. The debugger uses this too.
+function M.sail_root(root)
+  local result = vim
+    .system({
+      "docker",
+      "ps",
+      "--filter",
+      "label=com.docker.compose.service=laravel.test",
+      "--format",
+      '{{.Label "com.docker.compose.project.working_dir"}}',
+    }, { text = true })
+    :wait(5000)
+  if result.code ~= 0 then
+    return nil
+  end
+
+  local running = {}
+  for _, dir in ipairs(vim.split(result.stdout or "", "\n", { trimempty = true })) do
+    running[real(vim.trim(dir))] = true
+  end
+  if vim.tbl_isempty(running) then
+    return nil
+  end
+
+  root = real(root)
+  if running[root] then
+    return root
+  end
+  local main = main_checkout(root)
+  if not main then
+    return nil
+  end
+  if running[main] then
+    return main
+  end
+  for dir in pairs(running) do
+    if main_checkout(dir) == main then
+      return dir
+    end
+  end
+  return nil
 end
 
 local function encode(text)
@@ -144,7 +209,18 @@ function M.open()
     end
   end
 
+  -- Postgres belongs to whichever folder's Sail is running, which from a worktree is
+  -- usually main's, so the connection is named after that folder.
   local name = vim.fn.fnamemodify(root, ":t")
+  local sail = M.sail_root(root)
+  if sail and sail ~= real(root) then
+    local sail_name = vim.fn.fnamemodify(sail, ":t")
+    vim.notify(
+      ("dbkeys: Sail is running %s, not %s, so this is %s's database"):format(sail_name, name, sail_name),
+      vim.log.levels.WARN
+    )
+    name = sail_name .. " (Sail)"
+  end
   -- dadbod-ui reads vim.g.dbs once, the first time it opens, so a changed connection
   -- needs its state cleared to show up.
   if register(name, url) and vim.fn.exists "*db_ui#reset_state" == 1 then

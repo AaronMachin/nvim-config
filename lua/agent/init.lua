@@ -6,7 +6,9 @@
 --
 -- Context (the selection, the quickfix list, the last test run) is pasted into the
 -- "target" tab without pressing Enter, so there's room to add to it. The target is
--- the tab for the current file's git root, else the Claude tab focused last.
+-- the tab for the current file's git root, opened there if there isn't one. Only a
+-- buffer outside any git root (the quickfix window, a scratch buffer) falls back to
+-- the Claude tab focused last.
 
 local M = {}
 
@@ -33,16 +35,18 @@ local function git_root(path)
   return root and normalise(root)
 end
 
--- The current file's git root, else nvim's cwd's, else the cwd itself.
-local function current_root()
+-- The current file's git root, or nil for a buffer that isn't a file in a repo.
+local function buffer_root()
   local file = api.nvim_buf_get_name(0)
   if file ~= "" and vim.bo.buftype == "" then
-    local root = git_root(file)
-    if root then
-      return root
-    end
+    return git_root(file)
   end
-  return git_root(vim.uv.cwd()) or normalise(vim.uv.cwd())
+  return nil
+end
+
+-- The current file's git root, else nvim's cwd's, else the cwd itself.
+local function current_root()
+  return buffer_root() or git_root(vim.uv.cwd()) or normalise(vim.uv.cwd())
 end
 
 local function find(dir)
@@ -145,16 +149,29 @@ function M.list()
   return tabs
 end
 
--- The tab context goes to: the current file's root's, else the last one focused.
--- With `create`, one is opened for the current root when there's no Claude tab at all.
+-- The tab context goes to, whether it was just opened, and the folder it was looked
+-- for in. A file in a repo only ever gets its own root's tab (opened with `create`),
+-- never another worktree's. Any other buffer gets the tab focused last, with
+-- `fallback` set so the caller can say where it went, or with `create` and no tabs
+-- at all, a new one for nvim's cwd.
 local function target(create)
-  local root = current_root()
-  local tab = find(root) or most_recent()
-  if tab or not create then
-    return tab, false
+  local root = buffer_root()
+  local tab = root and find(root)
+  if tab or (root and not create) then
+    return tab, false, root
+  end
+  if not root then
+    local recent = most_recent()
+    if recent then
+      return recent, false, recent.dir, true
+    end
+    if not create then
+      return nil, false, nil
+    end
+    root = current_root()
   end
   open(root)
-  return find(root), true
+  return find(root), true, root
 end
 
 -- Waits until Claude has drawn something in a new tab (or a few seconds pass), then a
@@ -177,10 +194,13 @@ end
 -- Pastes `text` into the target tab without submitting it, then shows the tab.
 -- `build` takes the tab's directory and returns the text, so paths can be relative to it.
 local function paste(build)
-  local tab, is_new = target(true)
+  local tab, is_new, _, fallback = target(true)
   if not tab then
     vim.notify("agent: couldn't start Claude", vim.log.levels.WARN)
     return
+  end
+  if fallback then
+    vim.notify("agent: this buffer isn't in a git repository, so it went to the Claude tab in " .. vim.fn.fnamemodify(tab.dir, ":t"))
   end
   local text = build(tab.dir)
 
@@ -359,10 +379,15 @@ function M.review()
     return
   end
 
-  local tab = target(false)
+  -- A tab opened now would have nothing to review, so none is started.
+  local tab, _, dir, fallback = target(false)
   if not tab then
-    vim.notify("agent: no Claude tab to review", vim.log.levels.WARN)
+    local where = dir and (" in " .. vim.fn.fnamemodify(dir, ":t")) or ""
+    vim.notify("agent: no Claude tab" .. where .. " to review", vim.log.levels.WARN)
     return
+  end
+  if fallback then
+    vim.notify("agent: this buffer isn't in a git repository, so reviewing the Claude tab in " .. vim.fn.fnamemodify(tab.dir, ":t"))
   end
   if not tab.start_ref then
     vim.notify("agent: " .. tab.dir .. " had no commit when Claude started", vim.log.levels.WARN)
@@ -422,33 +447,74 @@ function M.commit_message()
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "gitcommit"
   api.nvim_buf_set_lines(buf, 0, -1, false, { "Asking Claude…" })
+  -- Unmodified only while it holds the placeholder, so it can be closed without a fuss.
   vim.bo[buf].modified = false
+  local placeholder_tick = api.nvim_buf_get_changedtick(buf)
+  local asking, committing, committed = true, false, false
+
+  -- A draft with changes is hidden rather than wiped when its window closes, so a
+  -- stray :q doesn't lose it (it stays in the buffer list). BufModifiedSet only
+  -- follows typing, so filling it below sets this too.
+  api.nvim_create_autocmd("BufModifiedSet", {
+    buffer = buf,
+    callback = function()
+      vim.bo[buf].bufhidden = vim.bo[buf].modified and "hide" or "wipe"
+    end,
+  })
 
   ask(prompt, diff, root, function(message, err)
+    asking = false
     if not api.nvim_buf_is_valid(buf) then
       return
     end
-    if not message then
-      api.nvim_buf_set_lines(buf, 0, -1, false, { "", "# Claude failed: " .. err })
-    else
-      api.nvim_buf_set_lines(buf, 0, -1, false, strip_fence(message))
+    vim.bo[buf].bufhidden = "hide"
+    local lines = message and strip_fence(message) or { "", "# Claude failed: " .. err }
+    if api.nvim_buf_get_changedtick(buf) ~= placeholder_tick then
+      -- Typed in while Claude was thinking: theirs stays, Claude's goes below as
+      -- comments, which the commit strips.
+      local suggestion = { "", "# Claude's suggestion, not used because you'd started typing:" }
+      for _, line in ipairs(lines) do
+        table.insert(suggestion, line:match "^#" and line or ("# " .. line))
+      end
+      api.nvim_buf_set_lines(buf, -1, -1, false, suggestion)
+      vim.notify("agent: you'd typed in the message, so Claude's suggestion is added below it as comments")
+      return
     end
-    vim.bo[buf].modified = false
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   end)
 
   api.nvim_create_autocmd("BufWriteCmd", {
     buffer = buf,
     callback = function()
+      if committed or committing then
+        return
+      end
+      if asking and api.nvim_buf_get_changedtick(buf) == placeholder_tick then
+        vim.notify("agent: Claude is still writing the message", vim.log.levels.WARN)
+        return
+      end
+      -- The message describes the diff it was written from, so it isn't used for another.
+      if git({ "diff", "--cached" }, root).stdout ~= diff then
+        vim.notify(
+          "agent: the staged changes changed since the message was written, so nothing was committed",
+          vim.log.levels.ERROR
+        )
+        return
+      end
+
+      committing = true
       local path = vim.fn.tempname()
       vim.fn.writefile(api.nvim_buf_get_lines(buf, 0, -1, false), path)
       -- --cleanup=strip drops # lines, and git refuses a message that ends up empty.
       vim.system({ "git", "commit", "--cleanup=strip", "-F", path }, { cwd = root, text = true }, function(result)
         vim.schedule(function()
           os.remove(path)
+          committing = false
           if result.code ~= 0 then
             vim.notify("agent: " .. vim.trim(result.stderr ~= "" and result.stderr or result.stdout), vim.log.levels.ERROR)
             return
           end
+          committed = true
           vim.notify(vim.split(vim.trim(result.stdout), "\n")[1])
           if api.nvim_buf_is_valid(buf) then
             vim.bo[buf].modified = false

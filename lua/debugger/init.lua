@@ -2,11 +2,12 @@
 --
 -- nvim listens on port 9003 and Xdebug in the container connects out to it, so a
 -- session starts listening first and stops at a breakpoint once a request comes in.
--- The container's /var/www/html is mapped to the git root of the file the session
--- starts from (or the cwd), so it follows whichever worktree you're in.
+-- The container's /var/www/html is mapped to the folder the running Sail was started
+-- from. Worktrees usually share main's Sail, and then the code that runs is main's,
+-- so a session started from a worktree warns that its breakpoints won't match.
 --
--- Xdebug only connects when the project's .env has SAIL_XDEBUG_MODE with debug in
--- it and Sail has been restarted. Starting a session warns when it hasn't.
+-- Xdebug only connects when that folder's .env has SAIL_XDEBUG_MODE with debug in it
+-- and Sail has been restarted. Starting a session warns when it hasn't.
 
 local M = {}
 
@@ -61,25 +62,52 @@ dap.adapters.php = {
     or vim.fn.stdpath "data" .. "/mason/bin/php-debug-adapter",
 }
 
--- Functions in a configuration are called when the session starts, which is what
--- keeps the mapping on the current worktree rather than wherever nvim was opened.
+-- The folder whose code Sail runs, warning when that isn't the current worktree or
+-- no Sail is running at all. Without a running Sail it falls back to the current
+-- worktree, so the mapping is right once Sail is started there.
+local function sail_root()
+  local root = project_root()
+  local name = vim.fn.fnamemodify(root, ":t")
+  local sail = require("dbkeys").sail_root(root)
+  if not sail then
+    vim.notify(
+      ("debugger: Sail isn't running for %s, so Xdebug has nothing to connect from"):format(name),
+      vim.log.levels.WARN
+    )
+    return root
+  end
+  if sail ~= (vim.uv.fs_realpath(root) or root) then
+    vim.notify(
+      ("debugger: Sail is running %s, not %s, so breakpoints here won't match the code that runs. Set them in %s"):format(
+        vim.fn.fnamemodify(sail, ":t"),
+        name,
+        sail
+      ),
+      vim.log.levels.WARN
+    )
+  end
+  return sail
+end
+
+-- The mapping is worked out when the session starts (in on_config below), so it
+-- follows the current worktree rather than wherever nvim was opened.
 local LISTEN = {
   type = "php",
   request = "launch",
   name = "Listen for Xdebug (Sail)",
   port = PORT,
-  pathMappings = function()
-    return { [CONTAINER_ROOT] = project_root() }
-  end,
 }
 
 dap.configurations.php = { LISTEN }
 
 dap.listeners.on_config.debugger = function(config)
-  if config.type == "php" then
-    warn_if_xdebug_off(project_root())
+  if config.type ~= "php" then
+    return config
   end
-  return config
+  local root = sail_root()
+  warn_if_xdebug_off(root)
+  -- A copy, as dap.run is handed LISTEN itself.
+  return vim.tbl_extend("force", config, { pathMappings = { [CONTAINER_ROOT] = root } })
 end
 
 dapui.setup()
@@ -177,5 +205,6 @@ end
 
 -- For the tests and anyone curious which root a session would map to.
 M.project_root = project_root
+M.sail_root = sail_root
 
 return M

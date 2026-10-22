@@ -13,9 +13,11 @@ local function git_root()
   return vim.fs.root(cwd, ".git") or cwd
 end
 
--- The branch from .git/HEAD, or the short commit when detached. Read straight from
--- the file because harpoon asks for the key on every buffer switch, and a git call
--- each time would be noticeable. In a worktree .git is a file naming the real one.
+-- The branch from .git/HEAD, or "detached" when HEAD is a commit. A detached HEAD
+-- moves with every commit and rebase step, so keying on the commit would start an
+-- empty list each time. Read straight from the file because harpoon asks for the key
+-- on every buffer switch, and a git call each time would be noticeable. In a
+-- worktree .git is a file naming the real one.
 local function branch(root)
   local git = root .. "/.git"
   local stat = vim.uv.fs_stat(git)
@@ -30,7 +32,7 @@ local function branch(root)
 
   local ok, lines = pcall(vim.fn.readfile, git .. "/HEAD", "", 1)
   local head = ok and lines[1] or ""
-  return head:match "^ref: refs/heads/(.+)$" or head:sub(1, 7)
+  return head:match "^ref: refs/heads/(.+)$" or "detached"
 end
 
 local function key()

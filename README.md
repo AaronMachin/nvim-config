@@ -28,7 +28,7 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
   - `<leader>gs` status, `<leader>gb` branches (Enter switches), `<leader>gc` commits, `<leader>gf` this file's history
   - `]h` / `[h` jump between changed blocks. `<leader>gp` previews the block under the cursor, `<leader>ga` stages it (or the selected lines), `<leader>gr` undoes it (`u` brings it back), and `<leader>gd` diffs the file against the last commit
   - `<leader>gv` opens diffview with everything the branch changes since it left the default branch. Pressing it again closes it
-  - `<leader>go` opens the file at the cursor's line (or the selection) on GitHub, on the current branch, which has to be pushed
+  - `<leader>go` opens the file at the cursor's line (or the selection) on GitHub, on the current branch (or the commit when HEAD is detached), which has to be pushed
   - git-blame.nvim shows the blame for the current line
 - Language servers for PHP (intelephense), Vue (vue-language-server 2.2.8, with ts_ls for the TypeScript inside .vue files), TypeScript, HTML, CSS and JSON. NvChad's keys apply: `gd` definition, `gr` references, `<leader>ra` rename, `<leader>ca` code actions
   - Install them on a new machine with `:MasonInstall intelephense typescript-language-server vue-language-server@2.2.8 html-lsp css-lsp json-lsp`. Keep Vue on 2.x: 3.x needs a newer lspconfig than `lazy-lock.json` holds, so updating it in the Mason window (or `:MasonInstallAll`) breaks Vue navigation. nvim warns on startup if that happens
@@ -46,15 +46,15 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
 - Git worktrees (`lua/worktrees`)
   - `<leader>ww` lists the repo's worktrees with branch, uncommitted files, last commit's age and subject. `⌂` marks the main checkout, `●` the one nvim is in and `✳` one with a Claude tab
   - `Enter` moves nvim there: it saves a session for the worktree it leaves, closes its files and restores the other's session. Terminal tabs keep running. It refuses while a file has unsaved changes
-  - `Ctrl+a` starts or focuses Claude in it. `Ctrl+s` checks its branch out in the main checkout: main's changes are stashed and the worktree is detached (its files stay as they are), after a confirm saying exactly that
+  - `Ctrl+a` starts or focuses Claude in it. `Ctrl+s` checks its branch out in the main checkout: main's changes are stashed and the worktree is detached (its files stay as they are), after a confirm saying exactly that. It refuses while main has unsaved files or the worktree has a Claude tab, and offers to undo if a step fails
   - `<leader>wn` asks for a ticket key and a short name and makes `SD-501-backend` in `control-plane-sd-501-backend` from a freshly fetched `origin/main`, then offers to start Claude in it. It has no `vendor/` or `node_modules` yet
-  - Sessions are kept in `~/.local/share/nvim/sessions`. Nothing restores one on startup
-- Pinned files with harpoon, a list per project and branch (`lua/pins`): `<leader>pa` pins the file, `<leader>pp` opens the list (edit it like a buffer to reorder or remove), `<leader>1`..`<leader>4` jump to a pin
+  - Sessions are kept in `~/.local/share/nvim/sessions`. Nothing restores one on startup, and quitting only saves over a session this nvim restored or saved itself
+- Pinned files with harpoon, a list per project and branch, with one shared list for any detached HEAD (`lua/pins`): `<leader>pa` pins the file, `<leader>pp` opens the list (edit it like a buffer to reorder or remove), `<leader>1`..`<leader>4` jump to a pin
 - `s` plus two letters jumps to any word on screen (flash.nvim)
-- Laravel pickers (`lua/laravel`): `<leader>lr` lists the routes and Enter opens the controller at the method (`Ctrl+r` reloads them). `<leader>lj` lists what the method under the cursor (or the class) uses, its `<Class>Test.php` tests, and for a test the class it tests
+- Laravel pickers (`lua/laravel`): `<leader>lr` lists the routes and Enter opens the controller at the method (`Ctrl+l` reloads them). `<leader>lj` lists what the method under the cursor (or the class) uses, its `<Class>Test.php` tests, and for a test the class it tests
 - `<leader>ps` runs PHPStan through Sail and puts the errors in the quickfix list (`lua/phpstan`)
-- `<leader>sq` opens dadbod-ui on the project's database, read from its `.env` and connecting through the port Sail forwards (`lua/dbkeys`)
+- `<leader>sq` opens dadbod-ui on the project's database, read from its `.env` and connecting through the port Sail forwards, and named after the folder whose Sail is running when that is another worktree (`lua/dbkeys`)
 - PHP debugging with Xdebug through Sail (`lua/debugger`). `F5` starts listening on port 9003 (or continues), `F9`/`<leader>db` toggles a breakpoint, `<leader>dB` adds one with a condition, `F10`/`F11`/`F12` step over/into/out, `<leader>dc` continues, `<leader>dq` stops, `<leader>du` shows or hides the debug panels, `<leader>de` evaluates the word under the cursor or the selection
-  - The container's `/var/www/html` maps to the git root of the file you start from, so it works in any worktree. The panels open when a session starts and close when it ends
+  - `/var/www/html` maps to the folder the running Sail was started from (usually main), and starting a session from a worktree that isn't running Sail warns that its breakpoints won't match the code that runs. The panels open when a session starts and close when it ends
   - Xdebug only connects with `SAIL_XDEBUG_MODE=develop,debug` in the project's `.env`, followed by `sail down && sail up -d`. Starting a session warns with that line when it's missing
 - Pest tests in a floating-terminal tab, through Sail when the project has it (`lua/testrun`): `<leader>tn` runs the `it()`/`test()` at or above the cursor, `<leader>tf` the file, `<leader>tl` the last run again

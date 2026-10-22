@@ -186,6 +186,11 @@ end
 
 -- Sessions ------------------------------------------------------------------
 
+-- Worktrees whose session this nvim may save on quit, keyed by real path: ones it
+-- restored the session of, or saved one for when leaving with the picker. Without
+-- this, a plain `nvim` opened on one file would replace the session on quit.
+local owned = {}
+
 function M.session_path(dir)
   return M.sessions_dir .. "/" .. realpath(dir):gsub("/", "%%") .. ".vim"
 end
@@ -194,6 +199,30 @@ local function file_buffers()
   return vim.tbl_filter(function(buf)
     return vim.bo[buf].buftype == "" and vim.bo[buf].buflisted
   end, vim.api.nvim_list_bufs())
+end
+
+-- A buffer's file with symlinks resolved, including one not written yet.
+local function buffer_path(name)
+  return vim.uv.fs_realpath(name) or (realpath(vim.fs.dirname(name)) .. "/" .. vim.fs.basename(name))
+end
+
+-- Names of the file buffers with unsaved changes, only those under `dir` if given.
+local function modified_buffers(dir)
+  dir = dir and realpath(dir)
+  local modified = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.bo[buf].buftype == "" and vim.bo[buf].modified then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if not dir then
+        if vim.bo[buf].buflisted then
+          table.insert(modified, name == "" and "[No Name]" or vim.fn.fnamemodify(name, ":~:."))
+        end
+      elseif name ~= "" and buffer_path(name):sub(1, #dir + 1) == dir .. "/" then
+        table.insert(modified, vim.fn.fnamemodify(name, ":~:."))
+      end
+    end
+  end
+  return modified
 end
 
 -- Saves a session for `dir`, unless no file is open: a worktree left with nothing
@@ -252,13 +281,7 @@ function M.switch(dir)
     return false
   end
 
-  local modified = {}
-  for _, buf in ipairs(file_buffers()) do
-    if vim.bo[buf].modified then
-      local name = vim.api.nvim_buf_get_name(buf)
-      table.insert(modified, name == "" and "[No Name]" or vim.fn.fnamemodify(name, ":~:."))
-    end
-  end
+  local modified = modified_buffers()
   if #modified > 0 then
     notify("save or discard these first: " .. table.concat(modified, ", "), vim.log.levels.WARN)
     return false
@@ -268,7 +291,9 @@ function M.switch(dir)
   if has_floatterm then
     floatterm.hide()
   end
-  M.save_session(here)
+  if here and M.save_session(here) then
+    owned[here] = true
+  end
   close_file_buffers()
   vim.cmd("cd " .. vim.fn.fnameescape(dir))
 
@@ -281,6 +306,8 @@ function M.switch(dir)
     end
     restored = ok
   end
+  -- A session that failed to restore isn't what's open, so it isn't saved over on quit.
+  owned[dir] = restored or nil
 
   notify("nvim is now in " .. vim.fs.basename(dir) .. (restored and " (session restored)" or ""))
   return true
@@ -429,9 +456,39 @@ end
 
 -- Switch the main checkout --------------------------------------------------
 
+local function files(count)
+  return count .. " uncommitted file" .. (count == 1 and "" or "s")
+end
+
+-- How many files in `dir` have uncommitted changes, or nil and git's error.
+local function count_changes(dir)
+  local ok, status, err = git(dir, { "--no-optional-locks", "status", "--porcelain" })
+  if not ok then
+    return nil, err
+  end
+  return #vim.split(status, "\n", { trimempty = true })
+end
+
+-- The ref (stash@{n}) of the stash in `dir` with exactly this message, or nil.
+-- Refs shift as stashes come and go, so it's looked up each time it's needed.
+local function find_stash(dir, message)
+  local ok, out = await_git(dir, { "stash", "list", "--format=%gd%x09%gs" })
+  if not ok then
+    return nil
+  end
+  for line in out:gmatch "[^\n]+" do
+    local ref, subject = line:match "^(%S+)\t(.*)$"
+    if subject and subject:sub(-(#message + 2)) == ": " .. message then
+      return ref
+    end
+  end
+  return nil
+end
+
 -- Checks out the branch of the worktree at `dir` in the main checkout, so Sail runs
 -- it. git won't check out a branch another worktree holds, so that worktree is
 -- detached first (its files stay as they are), and main's own changes are stashed.
+-- If a step fails, it offers to undo the ones before it, else says how to by hand.
 function M.switch_main(dir)
   run_async(function()
     local list, err = worktrees()
@@ -453,17 +510,35 @@ function M.switch_main(dir)
       return
     end
 
-    local ok, status, status_err = git(main.dir, { "--no-optional-locks", "status", "--porcelain" })
-    if not ok then
+    -- Saving one of these after the switch would write it over the other branch's file.
+    local modified = modified_buffers(main.dir)
+    if #modified > 0 then
+      notify("save or discard these in " .. main.name .. " first: " .. table.concat(modified, ", "), vim.log.levels.WARN)
+      return
+    end
+    -- Claude would carry on in a worktree whose branch has moved out from under it.
+    if agent_tab(wt.dir) then
+      notify("close the Claude tab in " .. wt.name .. " first", vim.log.levels.WARN)
+      return
+    end
+
+    local changes, status_err = count_changes(main.dir)
+    if not changes then
       notify("couldn't read main's status: " .. status_err, vim.log.levels.ERROR)
       return
     end
-    local changes = #vim.split(status, "\n", { trimempty = true })
-    local plural = changes == 1 and "" or "s"
+
+    -- A detached main is left on a commit no branch points to, so say which to find it again.
+    local was_on = ""
+    if main.detached then
+      local _, commit = git(main.dir, { "log", "-1", "--format=%h %s" })
+      was_on = "detached at " .. commit
+    end
 
     local plan = string.format(
-      "main: %scheck out %s; %s: detach HEAD (its files stay as they are)",
-      changes > 0 and string.format("stash %d uncommitted file%s, then ", changes, plural) or "",
+      "main%s: %scheck out %s; %s: detach HEAD (its files stay as they are)",
+      was_on ~= "" and (" (" .. was_on .. ")") or "",
+      changes > 0 and string.format("stash %s, then ", files(changes)) or "",
       wt.branch,
       wt.name
     )
@@ -471,38 +546,136 @@ function M.switch_main(dir)
       return
     end
 
+    -- Files can change while the confirm is open (Claude in main, say), so it's counted again.
+    local notes = {}
+    local fresh
+    fresh, status_err = count_changes(main.dir)
+    if not fresh then
+      notify("couldn't read main's status: " .. status_err, vim.log.levels.ERROR)
+      return
+    end
+    if fresh ~= changes then
+      table.insert(notes, string.format("main had %s by the time you confirmed, not the %d the confirm said", files(fresh), changes))
+    end
+    if was_on ~= "" then
+      table.insert(notes, "main was " .. was_on)
+    end
+
+    -- Each step done, with how to undo it here and by hand.
     local done = {}
+
+    local function report_left(left, heading)
+      local lines = { heading }
+      for _, step in ipairs(left) do
+        table.insert(lines, "  - " .. step.text)
+      end
+      table.insert(lines, "To undo it by hand, in this order:")
+      for i = #left, 1, -1 do
+        for _, command in ipairs(left[i].by_hand()) do
+          table.insert(lines, "  " .. command)
+        end
+      end
+      notify(table.concat(lines, "\n"), vim.log.levels.ERROR)
+    end
+
     local function fail(step, message)
       -- git's first line says what went wrong; the rest is advice.
       message = vim.split(message, "\n")[1]:gsub("%.$", "")
-      local so_far = #done > 0 and (" Already done: " .. table.concat(done, "; ") .. ".") or ""
-      notify(step .. " failed, stopped there: " .. message .. "." .. so_far, vim.log.levels.ERROR)
+      notify(step .. " failed, stopped there: " .. message .. ".", vim.log.levels.ERROR)
+      if #done == 0 then
+        return
+      end
+
+      local texts = vim.tbl_map(function(step_done)
+        return step_done.text
+      end, done)
+      local answer = await_select({ "Yes", "No" }, "Undo what was done? " .. table.concat(texts, "; "))
+      if answer ~= "Yes" then
+        return report_left(done, "Left as it is:")
+      end
+
+      local undone, left, problems = {}, {}, {}
+      for i = #done, 1, -1 do
+        local ok, err = done[i].undo()
+        if ok then
+          table.insert(undone, done[i].undone)
+        else
+          table.insert(left, 1, done[i])
+          table.insert(problems, err)
+        end
+      end
+      if #undone > 0 then
+        notify("undone: " .. table.concat(undone, "; "))
+      end
+      if #left > 0 then
+        report_left(left, "Couldn't undo (" .. table.concat(problems, "; ") .. "), so still done:")
+      end
     end
 
-    if changes > 0 then
-      local message = "worktrees: before switching to " .. wt.branch
+    if fresh > 0 then
+      -- The time makes the message this run's own, so undo never pops someone else's stash.
+      local message = string.format("worktrees: before switching to %s (%s)", wt.branch, os.date "%Y-%m-%d %H:%M:%S")
       local stashed, _, stash_err = await_git(main.dir, { "stash", "push", "-u", "-m", message })
       if not stashed then
         return fail("stashing main's changes", stash_err)
       end
-      table.insert(done, string.format('stashed %d file%s in main as "%s"', changes, plural, message))
+      if find_stash(main.dir, message) then
+        table.insert(done, {
+          text = string.format('stashed %s in main as "%s"', files(fresh), message),
+          undone = "main's changes are back",
+          undo = function()
+            local ref = find_stash(main.dir, message)
+            if not ref then
+              return false, "the stash is gone"
+            end
+            local popped, _, pop_err = await_git(main.dir, { "stash", "pop", ref })
+            return popped, popped and nil or ("stash pop: " .. vim.split(pop_err, "\n")[1])
+          end,
+          by_hand = function()
+            local ref = find_stash(main.dir, message) or "stash@{N}"
+            return {
+              string.format('git -C %s stash list   # the one named "%s"', vim.fn.shellescape(main.dir), message),
+              string.format("git -C %s stash pop %s", vim.fn.shellescape(main.dir), vim.fn.shellescape(ref)),
+            }
+          end,
+        })
+      end
     end
 
     local detached, _, detach_err = await_git(wt.dir, { "switch", "--detach" })
     if not detached then
       return fail("detaching " .. wt.name, detach_err)
     end
-    table.insert(done, "detached " .. wt.name)
+    table.insert(done, {
+      text = "detached " .. wt.name,
+      undone = wt.name .. " is on " .. wt.branch .. " again",
+      undo = function()
+        local now = worktrees(main.dir) or {}
+        for _, other in ipairs(now) do
+          if other.branch == wt.branch then
+            return false, other.name .. " has " .. wt.branch
+          end
+        end
+        local attached, _, attach_err = await_git(wt.dir, { "switch", wt.branch })
+        return attached, attached and nil or ("switch: " .. vim.split(attach_err, "\n")[1])
+      end,
+      by_hand = function()
+        return { string.format("git -C %s switch %s", vim.fn.shellescape(wt.dir), vim.fn.shellescape(wt.branch)) }
+      end,
+    })
 
     local switched, _, switch_err = await_git(main.dir, { "switch", wt.branch })
     if not switched then
       return fail("checking out " .. wt.branch .. " in main", switch_err)
     end
-    table.insert(done, "main is on " .. wt.branch)
 
     -- Buffers open from main now have different files under them.
     vim.cmd "silent! checktime"
-    notify(table.concat(done, "; "))
+    local summary = vim.tbl_map(function(step)
+      return step.text
+    end, done)
+    table.insert(summary, "main is on " .. wt.branch)
+    notify(table.concat(vim.list_extend(summary, notes), "; "))
   end)
 end
 
@@ -658,9 +831,10 @@ end
 
 -- Setup ---------------------------------------------------------------------
 
--- Saves the session for nvim's worktree on quit. Not when nvim was opened on
--- particular files (a commit message from git or lazygit, say): that's not the
--- session you were working in, and saving it would replace the one that is.
+-- Saves the session for nvim's worktree on quit, but only over one this nvim
+-- restored or saved itself (moving with the picker). A worktree with no session yet
+-- gets one, unless nvim was opened on particular files (a commit message from git
+-- or lazygit, say), which isn't the session you were working in.
 function M.setup()
   local opened_on_files = false
   for _, arg in ipairs(vim.fn.argv()) do
@@ -672,8 +846,12 @@ function M.setup()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("worktrees", { clear = true }),
     callback = function()
-      if not opened_on_files then
-        pcall(M.save_session, current_root())
+      local root = current_root()
+      if not root then
+        return
+      end
+      if owned[root] or (not opened_on_files and not vim.uv.fs_stat(M.session_path(root))) then
+        pcall(M.save_session, root)
       end
     end,
   })

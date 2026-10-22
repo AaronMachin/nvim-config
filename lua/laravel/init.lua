@@ -220,7 +220,7 @@ local function show_routes(root, entries)
   pickers
     .new({}, {
       prompt_title = "Routes · " .. vim.fn.fnamemodify(root, ":t"),
-      results_title = #entries .. " routes · Ctrl+r reload",
+      results_title = #entries .. " routes · Ctrl+l reload",
       finder = finders.new_table {
         results = entries,
         entry_maker = function(route)
@@ -259,7 +259,8 @@ local function show_routes(root, entries)
             vim.notify("laravel: can't find where " .. route.target.method .. " is defined", vim.log.levels.WARN)
           end
         end)
-        map({ "i", "n" }, "<C-r>", function()
+        -- Not Ctrl+r, as telescope maps Ctrl+r prefixes and it would wait for timeoutlen.
+        map({ "i", "n" }, "<C-l>", function()
           actions.close(prompt_bufnr)
           M.routes { refresh = true }
         end, { desc = "laravel reload routes" })

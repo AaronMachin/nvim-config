@@ -24,7 +24,8 @@ function M.toggle_branch_review()
 end
 
 -- Opens the current file at the cursor's line (or the selected lines) on GitHub,
--- on the current branch. The branch has to be pushed for the page to exist.
+-- on the current branch, or at the commit when HEAD is detached. The branch or commit
+-- has to be pushed for the page to exist.
 function M.open_on_github()
   local file = vim.api.nvim_buf_get_name(0)
   local root = vim.fs.root(file, ".git")
@@ -43,6 +44,12 @@ function M.open_on_github()
   local args = { "gh", "browse", file:sub(#root + 2) .. ":" .. lines }
   if branch ~= "" then
     vim.list_extend(args, { "--branch", branch })
+  else
+    -- gh's --commit takes its value only after "=", as on its own it means the last commit.
+    local commit = vim.trim(vim.system({ "git", "rev-parse", "HEAD" }, { cwd = root }):wait().stdout or "")
+    if commit ~= "" then
+      table.insert(args, "--commit=" .. commit)
+    end
   end
 
   vim.system(args, { cwd = root }, function(result)
