@@ -61,6 +61,64 @@ map({ "n", "v" }, "<leader>go", function()
   require("gitkeys").open_on_github()
 end, { desc = "git open on GitHub" })
 
+map("n", "<leader>gj", function()
+  require("gitkeys").open_ticket()
+end, { desc = "git open branch's Jira ticket" })
+
+-- Claude
+local function agent(fn)
+  return function()
+    require("agent")[fn]()
+  end
+end
+map("n", "<leader>ac", function()
+  require("agent").start(vim.fs.root(0, ".git") or vim.uv.cwd())
+end, { desc = "claude open or focus for this project" })
+map({ "n", "v" }, "<leader>as", agent "send_selection", { desc = "claude send selection or file" })
+map("n", "<leader>aq", agent "send_quickfix", { desc = "claude send quickfix list" })
+map("n", "<leader>at", agent "send_last_test", { desc = "claude send last test output" })
+map("v", "<leader>ae", agent "explain", { desc = "claude explain selection" })
+map("n", "<leader>ar", agent "review", { desc = "claude review changes since it started" })
+map("n", "<leader>ay", "<cmd>ClaudeCodeDiffAccept<CR>", { desc = "claude accept diff" })
+map("n", "<leader>an", "<cmd>ClaudeCodeDiffDeny<CR>", { desc = "claude reject diff" })
+map("n", "<leader>gm", agent "commit_message", { desc = "git commit message from Claude" })
+
+-- worktrees (setup saves a session on quit, so it runs at startup)
+require("worktrees").setup()
+map("n", "<leader>ww", function()
+  require("worktrees").pick()
+end, { desc = "worktrees pick (Enter moves nvim, C-a Claude, C-s main)" })
+map("n", "<leader>wn", function()
+  require("worktrees").create()
+end, { desc = "worktrees new for a ticket" })
+
+-- pinned files
+map("n", "<leader>pa", function()
+  require("pins").add()
+end, { desc = "pins pin this file" })
+map("n", "<leader>pp", function()
+  require("pins").menu()
+end, { desc = "pins menu" })
+for i = 1, 4 do
+  map("n", "<leader>" .. i, function()
+    require("pins").jump(i)
+  end, { desc = "pins jump to " .. i })
+end
+
+-- Laravel, PHPStan and the database
+map("n", "<leader>lr", function()
+  require("laravel").routes()
+end, { desc = "laravel routes" })
+map("n", "<leader>lj", function()
+  require("laravel").related()
+end, { desc = "laravel related files" })
+map("n", "<leader>ps", function()
+  require("phpstan").run()
+end, { desc = "phpstan run through Sail" })
+map("n", "<leader>sq", function()
+  require("dbkeys").open()
+end, { desc = "database open DBUI on project db" })
+
 -- tests
 map("n", "<leader>tn", function()
   require("testrun").run "nearest"

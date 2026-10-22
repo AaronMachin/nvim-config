@@ -34,4 +34,27 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
   - Install them on a new machine with `:MasonInstall intelephense typescript-language-server vue-language-server@2.2.8 html-lsp css-lsp json-lsp`. Keep Vue on 2.x: 3.x needs a newer lspconfig than `lazy-lock.json` holds, so updating it in the Mason window (or `:MasonInstallAll`) breaks Vue navigation. nvim warns on startup if that happens
 - Treesitter parsers for PHP, Vue, TypeScript, JavaScript, JSON, YAML, Markdown, SQL, Dockerfile and bash. There's no Blade parser in this nvim-treesitter version
 - Format on save with each project's own tools, only where the project has them: its `vendor/bin/pint` for PHP, its `eslint --fix` for JS/TS/Vue (Prettier instead where there's a Prettier config but no ESLint one), and Prettier for CSS, JSON and YAML where there's a Prettier config. It runs after the write, so saving isn't held up
+- Claude Code in floating-terminal tabs, one per git root, connected to nvim so it sees the file and selection and its edits open as diffs here (`lua/agent`)
+  - `<leader>ac` opens or focuses Claude for this project. `:ClaudeCode` uses the same tabs
+  - `<leader>as` pastes `@file#L12-30` for the selection (or the file) into Claude without sending it. `<leader>aq` pastes the quickfix list, `<leader>at` the last test run's output
+  - `<leader>ae` explains the selection in a float, with no session needed. `q` closes it
+  - `<leader>ar` opens diffview with everything changed since that Claude tab started. Press it again to close
+  - `<leader>ay` / `<leader>an` accept or reject Claude's proposed edit
+  - In a folder Claude doesn't trust yet, answer its trust prompt before sending anything, or the text is lost
+- `<leader>gm` asks Claude for a commit message for what's staged, in the style of recent commits and starting with the branch's ticket. `:w` commits it
+- `<leader>gj` opens the Jira ticket at the start of the branch name (SD-486-backend opens SD-486)
+- Git worktrees (`lua/worktrees`)
+  - `<leader>ww` lists the repo's worktrees with branch, uncommitted files, last commit's age and subject. `⌂` marks the main checkout, `●` the one nvim is in and `✳` one with a Claude tab
+  - `Enter` moves nvim there: it saves a session for the worktree it leaves, closes its files and restores the other's session. Terminal tabs keep running. It refuses while a file has unsaved changes
+  - `Ctrl+a` starts or focuses Claude in it. `Ctrl+s` checks its branch out in the main checkout: main's changes are stashed and the worktree is detached (its files stay as they are), after a confirm saying exactly that
+  - `<leader>wn` asks for a ticket key and a short name and makes `SD-501-backend` in `control-plane-sd-501-backend` from a freshly fetched `origin/main`, then offers to start Claude in it. It has no `vendor/` or `node_modules` yet
+  - Sessions are kept in `~/.local/share/nvim/sessions`. Nothing restores one on startup
+- Pinned files with harpoon, a list per project and branch (`lua/pins`): `<leader>pa` pins the file, `<leader>pp` opens the list (edit it like a buffer to reorder or remove), `<leader>1`..`<leader>4` jump to a pin
+- `s` plus two letters jumps to any word on screen (flash.nvim)
+- Laravel pickers (`lua/laravel`): `<leader>lr` lists the routes and Enter opens the controller at the method (`Ctrl+r` reloads them). `<leader>lj` lists what the method under the cursor (or the class) uses, its `<Class>Test.php` tests, and for a test the class it tests
+- `<leader>ps` runs PHPStan through Sail and puts the errors in the quickfix list (`lua/phpstan`)
+- `<leader>sq` opens dadbod-ui on the project's database, read from its `.env` and connecting through the port Sail forwards (`lua/dbkeys`)
+- PHP debugging with Xdebug through Sail (`lua/debugger`). `F5` starts listening on port 9003 (or continues), `F9`/`<leader>db` toggles a breakpoint, `<leader>dB` adds one with a condition, `F10`/`F11`/`F12` step over/into/out, `<leader>dc` continues, `<leader>dq` stops, `<leader>du` shows or hides the debug panels, `<leader>de` evaluates the word under the cursor or the selection
+  - The container's `/var/www/html` maps to the git root of the file you start from, so it works in any worktree. The panels open when a session starts and close when it ends
+  - Xdebug only connects with `SAIL_XDEBUG_MODE=develop,debug` in the project's `.env`, followed by `sail down && sail up -d`. Starting a session warns with that line when it's missing
 - Pest tests in a floating-terminal tab, through Sail when the project has it (`lua/testrun`): `<leader>tn` runs the `it()`/`test()` at or above the cursor, `<leader>tf` the file, `<leader>tl` the last run again

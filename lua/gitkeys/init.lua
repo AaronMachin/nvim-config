@@ -54,4 +54,19 @@ function M.open_on_github()
   end)
 end
 
+-- Opens the Jira ticket named at the start of the branch, so SD-486-backend opens
+-- SD-486.
+function M.open_ticket()
+  local root = vim.fs.root(0, ".git") or vim.uv.cwd()
+  local branch = vim.trim(vim.system({ "git", "branch", "--show-current" }, { cwd = root }):wait().stdout or "")
+  local key = branch:match "^%u+%-%d+"
+  if not key then
+    local name = branch ~= "" and branch or "a detached HEAD"
+    vim.notify("gitkeys: " .. name .. " doesn't start with a Jira key", vim.log.levels.WARN)
+    return
+  end
+
+  vim.ui.open("https://totara.atlassian.net/browse/" .. key)
+end
+
 return M

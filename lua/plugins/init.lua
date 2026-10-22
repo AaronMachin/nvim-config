@@ -44,6 +44,74 @@ return {
     cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewFileHistory" },
   },
 
+  -- s + two letters jumps to any visible word
+  {
+    "folke/flash.nvim",
+    event = "VeryLazy",
+    opts = { modes = { search = { enabled = false }, char = { enabled = false } } },
+    keys = {
+      {
+        "s",
+        mode = { "n", "x", "o" },
+        function()
+          require("flash").jump()
+        end,
+        desc = "flash jump",
+      },
+    },
+  },
+
+  -- Pinned files, kept per branch (see lua/pins)
+  {
+    "ThePrimeagen/harpoon",
+    branch = "harpoon2",
+    dependencies = { "nvim-lua/plenary.nvim" },
+  },
+
+  -- SQL in a buffer against the project's database (see lua/dbkeys)
+  {
+    "kristijanhusak/vim-dadbod-ui",
+    dependencies = { "tpope/vim-dadbod", "kristijanhusak/vim-dadbod-completion" },
+    cmd = { "DBUI", "DBUIToggle", "DBUIAddConnection" },
+    init = function()
+      vim.g.db_ui_use_nerd_fonts = 1
+      vim.g.db_ui_save_location = vim.fn.stdpath "data" .. "/dadbod"
+    end,
+  },
+
+  -- Claude Code's IDE connection: it sees the file and selection, and its edits open
+  -- as diffs here (see lua/agent)
+  {
+    "coder/claudecode.nvim",
+    event = "VeryLazy",
+    opts = function()
+      return { terminal = { provider = require("agent").provider } }
+    end,
+  },
+
+  -- Xdebug through Sail (see lua/debugger)
+  {
+    "mfussenegger/nvim-dap",
+    dependencies = { "rcarriga/nvim-dap-ui", "nvim-neotest/nvim-nio" },
+    config = function()
+      require "debugger"
+    end,
+    cmd = { "DapContinue", "DapToggleBreakpoint" },
+    keys = {
+      { "<F5>", function() require("debugger").continue() end, desc = "debug start or continue" },
+      { "<F9>", function() require("debugger").toggle_breakpoint() end, desc = "debug toggle breakpoint" },
+      { "<F10>", function() require("debugger").step_over() end, desc = "debug step over" },
+      { "<F11>", function() require("debugger").step_into() end, desc = "debug step into" },
+      { "<F12>", function() require("debugger").step_out() end, desc = "debug step out" },
+      { "<leader>db", function() require("debugger").toggle_breakpoint() end, desc = "debug toggle breakpoint" },
+      { "<leader>dB", function() require("debugger").conditional_breakpoint() end, desc = "debug conditional breakpoint" },
+      { "<leader>dc", function() require("debugger").continue() end, desc = "debug continue" },
+      { "<leader>dq", function() require("debugger").stop() end, desc = "debug stop" },
+      { "<leader>du", function() require("debugger").toggle_ui() end, desc = "debug show or hide panels" },
+      { "<leader>de", function() require("debugger").eval() end, mode = { "n", "x" }, desc = "debug evaluate" },
+    },
+  },
+
   {
     "f-person/git-blame.nvim",
     event = "VeryLazy",
