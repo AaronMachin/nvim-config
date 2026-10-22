@@ -9,7 +9,7 @@ M.path = vim.fn.stdpath "data" .. "/floatterm-settings.json"
 
 M.defaults = {
   -- Where the tab bar sits inside the float: "left", "top" or "off".
-  tabbar = "off",
+  tabbar = "left",
   tabbar_width = 28,
   -- Where the float opens in a new nvim: "bottom", "top", "left", "right" or "box".
   start_position = "bottom",

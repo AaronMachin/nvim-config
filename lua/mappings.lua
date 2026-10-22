@@ -83,6 +83,14 @@ map("n", "<leader>ay", "<cmd>ClaudeCodeDiffAccept<CR>", { desc = "claude accept 
 map("n", "<leader>an", "<cmd>ClaudeCodeDiffDeny<CR>", { desc = "claude reject diff" })
 map("n", "<leader>gm", agent "commit_message", { desc = "git commit message from Claude" })
 
+-- the floating terminal's tab bar, Claude bookmark and settings page
+require("floatterm.tabbar").setup()
+require("floatterm.bookmark").setup()
+require("floatterm.config_page").setup()
+map("n", "<leader>ab", function()
+  require("floatterm.bookmark").toggle()
+end, { desc = "claude show or hide the sessions bookmark" })
+
 -- worktrees (setup saves a session on quit, so it runs at startup)
 require("worktrees").setup()
 map("n", "<leader>ww", function()

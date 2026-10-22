@@ -31,6 +31,8 @@ dofile(vim.g.base46_cache .. "statusline")
 
 require "options"
 require "nvchad.autocmds"
+-- Here rather than in mappings, which load after VimEnter, when tabs are reopened.
+require("floatterm.restore").setup()
 
 vim.schedule(function()
   require "mappings"

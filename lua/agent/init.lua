@@ -3,6 +3,8 @@
 -- Each tab remembers the commit it started on, so everything Claude has changed since
 -- can be reviewed in diffview. The tabs also back claudecode.nvim's terminal (see
 -- M.provider), so :ClaudeCode and the IDE connection use them rather than a split.
+-- The tabs are floatterm's own records, so a `claude` typed into any floatterm tab
+-- counts as its folder's Claude tab too, once Claude's hooks report it.
 --
 -- Context (the selection, the quickfix list, the last test run) is pasted into the
 -- "target" tab without pressing Enter, so there's room to add to it. The target is
@@ -14,8 +16,6 @@ local M = {}
 
 local api = vim.api
 
--- One entry per tab: { dir, buf, job, start_ref }.
-local tabs = {}
 -- When each tab's buffer was last entered, keyed by buffer, to find the most recent.
 local entered = {}
 local enter_count = 0
@@ -49,8 +49,27 @@ local function current_root()
   return buffer_root() or git_root(vim.uv.cwd()) or normalise(vim.uv.cwd())
 end
 
+-- The Claude tabs are floatterm's records with kind "claude": the ones opened here,
+-- and any where the user typed `claude` (see lua/floatterm/claude). Each is listed
+-- as { dir, buf, job, start_ref, record }, dir being the git root it serves.
+local function claude_tabs()
+  local found = {}
+  for _, record in ipairs(require("floatterm").tabs()) do
+    if record.kind == "claude" then
+      table.insert(found, {
+        dir = git_root(record.cwd) or normalise(record.cwd),
+        buf = record.buf,
+        job = record.job,
+        start_ref = record.start_ref,
+        record = record,
+      })
+    end
+  end
+  return found
+end
+
 local function find(dir)
-  for _, tab in ipairs(tabs) do
+  for _, tab in ipairs(claude_tabs()) do
     if tab.dir == dir then
       return tab
     end
@@ -65,7 +84,7 @@ end
 
 local function most_recent()
   local best = nil
-  for _, tab in ipairs(tabs) do
+  for _, tab in ipairs(claude_tabs()) do
     if not best or (entered[tab.buf] or 0) > (entered[best.buf] or 0) then
       best = tab
     end
@@ -73,15 +92,19 @@ local function most_recent()
   return best
 end
 
-local function forget(buf)
-  for i, tab in ipairs(tabs) do
-    if tab.buf == buf then
-      table.remove(tabs, i)
-      break
+-- Any floatterm tab can become a Claude tab, so every one's visits are counted.
+api.nvim_create_autocmd("BufEnter", {
+  callback = function(args)
+    if package.loaded.floatterm and require("floatterm").record(args.buf) then
+      touch(args.buf)
     end
-  end
-  entered[buf] = nil
-end
+  end,
+})
+api.nvim_create_autocmd("BufWipeout", {
+  callback = function(args)
+    entered[args.buf] = nil
+  end,
+})
 
 -- The variables claudecode.nvim gives its own terminal, so a tab opened here (not
 -- through :ClaudeCode) still connects back to nvim. Empty when the plugin isn't running.
@@ -97,33 +120,32 @@ local function ide_env()
   }
 end
 
--- Opens a Claude tab in `dir`. opts: label, argv (claude by default) and env.
-local function open(dir, opts)
+-- Opens a Claude tab in `dir`, even if the folder has one already. opts: label, argv
+-- (claude by default), env, session_id, start_ref (the commit it started on, found
+-- now if not given) and show = false to open it without showing the float.
+-- Returns the tab's buffer.
+function M.open(dir, opts)
   opts = opts or {}
-  local start = vim.system({ "git", "rev-parse", "HEAD" }, { cwd = dir, text = true }):wait()
-  local start_ref = start.code == 0 and vim.trim(start.stdout) or nil
+  local start_ref = opts.start_ref
+  if not start_ref then
+    local start = vim.system({ "git", "rev-parse", "HEAD" }, { cwd = dir, text = true }):wait()
+    start_ref = start.code == 0 and vim.trim(start.stdout) or nil
+  end
 
-  local job, buf = require("floatterm").new_tab(opts.argv or { "claude" }, {
+  local floatterm = require "floatterm"
+  local _, buf = floatterm.new_tab(opts.argv or { "claude" }, {
     cwd = dir,
     env = opts.env or ide_env(),
     label = opts.label or vim.fn.fnamemodify(dir, ":t"),
+    kind = "claude",
+    session_id = opts.session_id,
+    show = opts.show,
   })
-  table.insert(tabs, { dir = dir, buf = buf, job = job, start_ref = start_ref })
-  touch(buf)
-
-  api.nvim_create_autocmd("BufEnter", {
-    buffer = buf,
-    callback = function()
-      touch(buf)
-    end,
-  })
-  api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
-    buffer = buf,
-    once = true,
-    callback = function()
-      forget(buf)
-    end,
-  })
+  -- Claude is the job itself, so closing it closes the tab (see provider.close).
+  floatterm.update(buf, { start_ref = start_ref, claude_job = true })
+  if opts.show ~= false then
+    touch(buf)
+  end
   return buf
 end
 
@@ -137,7 +159,7 @@ function M.start(dir, opts)
     touch(tab.buf)
     return tab.buf
   end
-  return open(dir, opts)
+  return M.open(dir, opts)
 end
 
 function M.tab_for(dir)
@@ -145,8 +167,9 @@ function M.tab_for(dir)
   return tab and tab.buf
 end
 
+-- Every Claude tab, as { dir, buf, job, start_ref, record }.
 function M.list()
-  return tabs
+  return claude_tabs()
 end
 
 -- The tab context goes to, whether it was just opened, and the folder it was looked
@@ -170,7 +193,7 @@ local function target(create)
     end
     root = current_root()
   end
-  open(root)
+  M.open(root)
   return find(root), true, root
 end
 
@@ -545,7 +568,7 @@ local function provider_open(cmd_string, env_table, config, focus)
 
   local previous = api.nvim_get_current_win()
   -- exec so :ClaudeCode's arguments (--resume, say) are split as the shell would.
-  open(dir, { argv = { vim.o.shell, "-c", "exec " .. cmd_string }, env = env_table })
+  M.open(dir, { argv = { vim.o.shell, "-c", "exec " .. cmd_string }, env = env_table })
   if focus == false then
     require("floatterm").hide()
     if api.nvim_win_is_valid(previous) then
@@ -569,8 +592,16 @@ M.provider = {
   open = provider_open,
   close = function()
     local tab = find(cwd_dir())
-    if tab then
+    if tab and tab.record.claude_job then
       vim.fn.jobstop(tab.job)
+    elseif tab then
+      -- A `claude` typed into a shell: Ctrl+C twice quits Claude and leaves the shell.
+      api.nvim_chan_send(tab.job, "\3")
+      vim.defer_fn(function()
+        if tab.record.kind == "claude" then
+          api.nvim_chan_send(tab.job, "\3")
+        end
+      end, 100)
     end
   end,
   simple_toggle = provider_toggle,

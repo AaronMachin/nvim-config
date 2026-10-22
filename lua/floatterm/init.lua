@@ -393,7 +393,8 @@ function M.current_buf()
 end
 
 -- Changes fields on a tab's record and fires FloatTermTabChanged. A new status sets
--- status_since unless given.
+-- status_since unless given. A field set to vim.NIL is cleared (a nil in the table
+-- would simply be skipped).
 function M.update(buf, fields)
   local record = M.record(buf)
   if not record then
@@ -402,6 +403,9 @@ function M.update(buf, fields)
 
   local changed = {}
   for key, value in pairs(fields) do
+    if value == vim.NIL then
+      value = nil
+    end
     if record[key] ~= value then
       record[key] = value
       table.insert(changed, key)
