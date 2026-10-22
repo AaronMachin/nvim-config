@@ -36,6 +36,32 @@ local function marks()
   return found
 end
 
+-- Where the bookmark goes, as editor row and column: in the top right, below the tab
+-- line when there is one (NvChad's buffer line uses that row). When the float covers
+-- that spot (full-screen, say), it sits in the terminal's top border instead, just
+-- left of the corner and clear of a tab bar along the top.
+local function spot(width)
+  local tabline = vim.o.showtabline == 2 or (vim.o.showtabline == 1 and #api.nvim_list_tabpages() > 1)
+  local row = tabline and 1 or 0
+  local col = math.max(0, vim.o.columns - width - 1)
+
+  local floatterm = package.loaded["floatterm"]
+  local float = floatterm and floatterm.window()
+  if not (float and api.nvim_win_get_tabpage(float) == api.nvim_get_current_tabpage()) then
+    return row, col
+  end
+  local layout = floatterm.layout()
+  local outer, terminal = layout.outer, layout.terminal
+  local overlaps = row >= outer.row
+    and row < outer.row + outer.height
+    and col < outer.col + outer.width
+    and col + width > outer.col
+  if not overlaps then
+    return row, col
+  end
+  return terminal.row, math.max(terminal.col + 1, terminal.col + terminal.width - width - 2)
+end
+
 function M.redraw()
   local found = marks()
   if not settings.get "bookmark" or #found == 0 then
@@ -60,18 +86,22 @@ function M.redraw()
     api.nvim_buf_set_extmark(buf, ns, 0, span[1], { end_col = span[2], hl_group = span[3] })
   end
 
-  -- Below the tabline when there is one, a column in from the right edge.
   local width = vim.fn.strdisplaywidth(text)
-  local tabline = vim.o.showtabline == 2 or (vim.o.showtabline == 1 and #api.nvim_list_tabpages() > 1)
+  local row, col = spot(width)
   local config = {
     relative = "editor",
-    row = tabline and 1 or 0,
-    col = math.max(0, vim.o.columns - width - 1),
+    row = row,
+    col = col,
     width = width,
     height = 1,
     zindex = 250,
     focusable = false,
   }
+  -- A float shows only on the tab page it was opened on, so on another one it's
+  -- opened again there.
+  if win and api.nvim_win_is_valid(win) and api.nvim_win_get_tabpage(win) ~= api.nvim_get_current_tabpage() then
+    close()
+  end
   if win and api.nvim_win_is_valid(win) then
     api.nvim_win_set_config(win, config)
   else
@@ -109,8 +139,14 @@ function M.setup()
     pattern = { "FloatTermLayoutChanged", "FloatTermTabsChanged", "FloatTermTabChanged", "FloatTermSettingsChanged" },
     callback = vim.schedule_wrap(M.redraw),
   })
-  api.nvim_create_autocmd({ "VimResized", "TabNew", "TabClosed" }, {
+  -- The tab line coming or going moves it, and another tab page needs its own.
+  api.nvim_create_autocmd({ "VimResized", "TabNew", "TabEnter", "TabClosed" }, {
     group = group,
+    callback = vim.schedule_wrap(M.redraw),
+  })
+  api.nvim_create_autocmd("OptionSet", {
+    group = group,
+    pattern = "showtabline",
     callback = vim.schedule_wrap(M.redraw),
   })
 end

@@ -10,8 +10,9 @@
 -- shell tab shows its folder and what's running in it.
 --
 -- While tabs exist, a timer (once a second) copies each tab's terminal title into its
--- record and works out each shell tab's foreground command with `ps`, so the bar and
--- anything else reading the records (the bookmark, sessions) stay current.
+-- record. While the bar is drawn or a Claude tab exists, it also works out each shell
+-- tab's foreground command with `ps`, so the bar and anything else reading the records
+-- (sessions) stay current.
 
 local M = {}
 
@@ -32,6 +33,8 @@ local entries = {}
 local selected = nil
 local timer = nil
 local busy = false
+-- How many times `ps` has been started. For tests and debugging.
+M.ps_runs = 0
 -- Per tab buffer: idle when the shell is waiting at its prompt, ran once anything has
 -- run in it since this nvim opened it (until then a restored last_command shows).
 local idle = {}
@@ -374,6 +377,16 @@ function M.redraw()
     close()
     return
   end
+  -- A float only shows on the tab page it was opened on, so the bar belongs there too.
+  -- A redraw scheduled before a tab-page switch leaves it alone; the float's own tab
+  -- page redraws it when it's entered again.
+  local float_tab = api.nvim_win_get_tabpage(floatterm.window())
+  if is_open() and api.nvim_win_get_tabpage(bar_win) ~= float_tab then
+    close()
+  end
+  if float_tab ~= api.nvim_get_current_tabpage() then
+    return
+  end
 
   local current = 1
   for i, record in ipairs(tabs) do
@@ -652,37 +665,68 @@ function M.enter()
   M.redraw()
 end
 
+-- The screen cells a float covers, border included: top, left, bottom, right (0-based,
+-- inclusive).
+local function float_cells(win, config)
+  local pos = api.nvim_win_get_position(win)
+  local border = type(config.border) == "table" and #config.border > 0 and 2 or 0
+  return pos[1], pos[2], pos[1] + config.height + border - 1, pos[2] + config.width + border - 1
+end
+
+-- True when another float is drawn over the bar at this cell. Neovim reports the
+-- focusable window under the mouse (never the bar, which can't be focused), so one
+-- found there at the bar's zindex or above is on top of it; a float that can't be
+-- focused counts when it's strictly above.
+local function covered(pos, row, cell)
+  local bar_z = api.nvim_win_get_config(bar_win).zindex or 50
+  for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
+    local config = api.nvim_win_get_config(win)
+    if win ~= bar_win and config.relative ~= "" then
+      local z = config.zindex or 50
+      local top, left, bottom, right = float_cells(win, config)
+      local inside = row >= top and row <= bottom and cell >= left and cell <= right
+      if inside and (z > bar_z or (win == pos.winid and z == bar_z)) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- A click on a tab in the bar opens it. The bar can't be focused, so the click is
--- matched to the bar by where it landed on screen; anywhere else it does what it
--- always does.
+-- matched to the bar by where it landed on screen, and only counts when the bar is on
+-- this tab page and nothing is drawn over it there; anywhere else the click (and any
+-- drag that follows) does what it always does.
 local function on_click()
   local floatterm = package.loaded["floatterm"]
-  if not (floatterm and is_open()) then
+  if not (floatterm and is_open()) or api.nvim_win_get_tabpage(bar_win) ~= api.nvim_get_current_tabpage() then
     return "<LeftMouse>"
   end
-  local box = floatterm.layout().tabbar
   local pos = vim.fn.getmousepos()
   local row, cell = pos.screenrow - 1, pos.screencol - 1
-  local i
-  if box and is_horizontal() then
-    if row == box.row and cell >= box.col and cell < box.col + box.width then
-      i = tab_at_cell(cell - box.col)
-    end
-  elseif box then
-    -- Inside the border.
-    local inside = row > box.row
-      and row < box.row + box.height - 1
-      and cell > box.col
-      and cell < box.col + box.width - 1
-    if inside then
-      local top = api.nvim_win_call(bar_win, function()
-        return vim.fn.line "w0"
-      end)
-      i = tab_at_line(row - box.row - 1 + top - 1)
-    end
-  end
-  if not i then
+  local config = api.nvim_win_get_config(bar_win)
+  local top, left, bottom, right = float_cells(bar_win, config)
+  -- Inside the border, when the bar has one (down the left side).
+  local edge = (top + config.height - 1 < bottom) and 1 or 0
+  if row < top + edge or row > bottom - edge or cell < left + edge or cell > right - edge then
     return "<LeftMouse>"
+  end
+  if covered(pos, row, cell) then
+    return "<LeftMouse>"
+  end
+  local i
+  if is_horizontal() then
+    i = tab_at_cell(cell - left)
+  else
+    local first = api.nvim_win_call(bar_win, function()
+      return vim.fn.line "w0"
+    end)
+    i = tab_at_line(row - top - edge + first - 1)
+  end
+  -- On the bar between tabs: nothing to open, and the window under the bar isn't the
+  -- one clicked.
+  if not i then
+    return ""
   end
   local record = floatterm.tabs()[i]
   vim.schedule(function()
@@ -691,12 +735,8 @@ local function on_click()
   return ""
 end
 
--- One `ps` for every shell tab's terminal foreground process group, then one for the
--- leaders of those groups. An idle shell is its own foreground group.
-local function refresh_commands(tabs)
-  if busy then
-    return
-  end
+-- Each shell tab's shell process id, by buffer.
+local function shell_pids(tabs)
   local pids = {}
   for _, record in ipairs(tabs) do
     if record.kind ~= "claude" and record.job then
@@ -706,57 +746,89 @@ local function refresh_commands(tabs)
       end
     end
   end
-  if vim.tbl_isempty(pids) then
-    return
-  end
+  return pids
+end
 
-  local function parse(stdout, with_tpgid)
-    local found = {}
-    for line in (stdout or ""):gmatch "[^\n]+" do
-      if with_tpgid then
-        local pid, tpgid, args = line:match "^%s*(%d+)%s+(-?%d+)%s+(.*)$"
-        if pid then
-          found[tonumber(pid)] = { tpgid = tonumber(tpgid), args = args }
-        end
-      else
-        local pid, args = line:match "^%s*(%d+)%s+(.*)$"
-        if pid then
-          found[tonumber(pid)] = args
-        end
+-- `ps` output as { [pid] = { tpgid, args } }, or { [pid] = args } without tpgid.
+local function parse_ps(stdout, with_tpgid)
+  local found = {}
+  for line in (stdout or ""):gmatch "[^\n]+" do
+    if with_tpgid then
+      local pid, tpgid, args = line:match "^%s*(%d+)%s+(-?%d+)%s+(.*)$"
+      if pid then
+        found[tonumber(pid)] = { tpgid = tonumber(tpgid), args = args }
+      end
+    else
+      local pid, args = line:match "^%s*(%d+)%s+(.*)$"
+      if pid then
+        found[tonumber(pid)] = args
       end
     end
-    return found
+  end
+  return found
+end
+
+-- Sets each shell tab's command from what `ps` found: its shell when it's waiting at
+-- the prompt, else the leader of its terminal's foreground group.
+local function apply_commands(pids, shells, leaders)
+  local floatterm = package.loaded["floatterm"]
+  if not floatterm then
+    return
+  end
+  for buf, pid in pairs(pids) do
+    local shell = shells[pid]
+    if shell and floatterm.record(buf) then
+      local name = tidy(shell.args):match "^(%S+)"
+      local own = shell.tpgid == pid or shell.tpgid <= 0
+      idle[buf] = own and SHELLS[name] == true
+      local command
+      if idle[buf] then
+        command = name
+      else
+        ran[buf] = true
+        local leader = own and shell.args or leaders[shell.tpgid]
+        command = leader and tidy(leader) or floatterm.record(buf).command
+      end
+      floatterm.update(buf, { command = command })
+    end
+  end
+end
+
+-- One `ps` for every shell tab's terminal foreground process group, then one for the
+-- leaders of those groups. An idle shell is its own foreground group.
+local function refresh_commands(tabs)
+  if busy then
+    return
+  end
+  local pids = shell_pids(tabs)
+  if vim.tbl_isempty(pids) then
+    return
   end
 
   local function finish(shells, leaders)
     vim.schedule(function()
       busy = false
-      local floatterm = require "floatterm"
-      for buf, pid in pairs(pids) do
-        local shell = shells[pid]
-        if shell and floatterm.record(buf) then
-          local name = tidy(shell.args):match "^(%S+)"
-          local own = shell.tpgid == pid or shell.tpgid <= 0
-          idle[buf] = own and SHELLS[name] == true
-          local command
-          if idle[buf] then
-            command = name
-          else
-            ran[buf] = true
-            local leader = own and shell.args or leaders[shell.tpgid]
-            command = leader and tidy(leader) or floatterm.record(buf).command
-          end
-          floatterm.update(buf, { command = command })
-        end
-      end
+      apply_commands(pids, shells, leaders)
       schedule_redraw()
     end)
   end
 
+  -- Any error between here and finish clears busy, or no `ps` would ever run again.
+  local function guarded(fn)
+    return function(...)
+      local ok = pcall(fn, ...)
+      if not ok then
+        busy = false
+      end
+    end
+  end
+
   busy = true
+  M.ps_runs = M.ps_runs + 1
   local list = table.concat(vim.tbl_values(pids), ",")
-  local ok = pcall(vim.system, { "ps", "-o", "pid=,tpgid=,args=", "-p", list }, { text = true }, function(first)
-    local shells = parse(first.stdout, true)
+  local ps = { "ps", "-o", "pid=,tpgid=,args=", "-p", list }
+  local ok = pcall(vim.system, ps, { text = true }, guarded(function(first)
+    local shells = parse_ps(first.stdout, true)
     local groups = {}
     for pid, shell in pairs(shells) do
       if shell.tpgid > 0 and shell.tpgid ~= pid then
@@ -769,16 +841,41 @@ local function refresh_commands(tabs)
     end
     local leaders_list = table.concat(vim.tbl_keys(groups), ",")
     local leaders_ps = { "ps", "-o", "pid=,args=", "-p", leaders_list }
-    local started = pcall(vim.system, leaders_ps, { text = true }, function(second)
-      finish(shells, parse(second.stdout, false))
-    end)
+    local started = pcall(vim.system, leaders_ps, { text = true }, guarded(function(second)
+      finish(shells, parse_ps(second.stdout, false))
+    end))
     if not started then
       finish(shells, {})
     end
-  end)
+  end))
   if not ok then
     busy = false
   end
+end
+
+-- Brings every shell tab's command up to date now, waiting for `ps` (half a second at
+-- most). lua/floatterm/restore calls it before saving, as `ps` otherwise only runs while
+-- the bar is drawn or a Claude tab exists. Does nothing with no shell tabs, and leaves
+-- the records as they were if `ps` fails.
+function M.refresh_now()
+  local floatterm = package.loaded["floatterm"]
+  local pids = shell_pids(floatterm and floatterm.tabs() or {})
+  if vim.tbl_isempty(pids) then
+    return
+  end
+  -- Every process at once, so the foreground groups' leaders come in the same call.
+  local ok, result = pcall(function()
+    return vim.system({ "ps", "-A", "-o", "pid=,tpgid=,args=" }, { text = true }):wait(500)
+  end)
+  if not ok or result.code ~= 0 then
+    return
+  end
+  local all = parse_ps(result.stdout, true)
+  local leaders = {}
+  for pid, process in pairs(all) do
+    leaders[pid] = process.args
+  end
+  pcall(apply_commands, pids, all, leaders)
 end
 
 local function stop_timer()
@@ -805,7 +902,15 @@ function M.tick()
       end
     end
   end
-  refresh_commands(tabs)
+  -- `ps` runs only while the bar is drawn or a Claude tab exists, not for shells
+  -- nobody can see.
+  local has_claude = false
+  for _, record in ipairs(tabs) do
+    has_claude = has_claude or record.kind == "claude"
+  end
+  if is_open() or has_claude then
+    refresh_commands(tabs)
+  end
   -- Times in the bar move on even when nothing else changes.
   if is_open() then
     schedule_redraw()
@@ -842,6 +947,8 @@ function M.setup()
         end
         if #floatterm.tabs() > 0 then
           start_timer()
+        else
+          stop_timer()
         end
       end
       if args.match == "FloatTermLayoutChanged" and not args.data.open then

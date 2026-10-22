@@ -27,15 +27,29 @@ settings="${settings:-${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}}"
 repo=$(cd "$(dirname "$0")" && pwd -P)
 # Quoted, as Claude runs the command through a shell.
 command="\"$repo/bin/floatterm-claude-hook\""
-events="SessionStart UserPromptSubmit Notification Stop SessionEnd"
+events="SessionStart UserPromptSubmit Notification PostToolUse Stop SessionEnd"
 
-if [ ! -f "$settings" ]; then
+# A symlinked settings file (kept in a dotfiles repo, say) is written through to the
+# file it points at, so the link stays.
+target=$settings
+while [ -L "$target" ]; do
+  link=$(readlink "$target")
+  case "$link" in
+    /*) target=$link ;;
+    *) target="$(dirname "$target")/$link" ;;
+  esac
+done
+
+# A missing, empty or whitespace-only file reads as {}. Anything else must be JSON,
+# or the update below fails and nothing is written.
+input=$target
+if [ ! -f "$target" ] || ! grep -q '[^[:space:]]' "$target"; then
   if $uninstall; then
-    echo "No $settings, so nothing to remove."
+    echo "No settings in $settings, so nothing to remove."
     exit 0
   fi
-  mkdir -p "$(dirname "$settings")"
-  echo '{}' >"$settings"
+  mkdir -p "$(dirname "$target")"
+  input=/dev/null
 fi
 
 # Prints the updated settings, then the events changed, one per line, after a line
@@ -60,15 +74,15 @@ if command -v jq >/dev/null 2>&1; then
           | [., $changed]
         end
       | (.[0] | tojson), "---", .[1][]
-    ' "$settings" -r
+    ' -r < <(if [ "$input" = /dev/null ]; then echo '{}'; else cat "$input"; fi)
   }
 else
   update() {
-    python3 -I - "$settings" "$command" "$events" "$uninstall" <<'PYTHON'
+    python3 -I - "$input" "$command" "$events" "$uninstall" <<'PYTHON'
 import json, sys
 path, command, events, uninstall = sys.argv[1], sys.argv[2], sys.argv[3].split(), sys.argv[4] == "true"
 with open(path) as f:
-    data = json.load(f)
+    data = json.loads(f.read() or "{}")
 hooks = data.get("hooks") or {}
 ours = lambda group: any(h.get("command") == command for h in group.get("hooks", []))
 changed = []
@@ -108,17 +122,23 @@ if [ -z "$changed" ]; then
   exit 0
 fi
 
-# Formatted into a temporary file first so a failure can't leave the settings
-# half-written, then copied over rather than moved, keeping its permissions (and a
-# symlink, if it's one).
-tmp=$(mktemp)
+# Formatted into a temporary file beside the settings, then moved over them in one
+# step, so Claude never reads a half-written file. It takes the old file's permissions.
+tmp=$(mktemp "$(dirname "$target")/.$(basename "$target").XXXXXX")
+trap 'rm -f "$tmp"' EXIT
 if command -v jq >/dev/null 2>&1; then
   printf '%s\n' "$output" | sed -n 1p | jq . >"$tmp"
 else
   printf '%s\n' "$output" | sed -n 1p | python3 -I -m json.tool --indent 2 >"$tmp"
 fi
-cat "$tmp" >"$settings"
-rm -f "$tmp"
+if [ -f "$target" ]; then
+  # GNU stat takes -c; macOS's takes -f.
+  mode=$(stat -c %a "$target" 2>/dev/null || stat -f %Lp "$target")
+  chmod "$mode" "$tmp"
+else
+  chmod 644 "$tmp"
+fi
+mv -f "$tmp" "$target"
 
 if $uninstall; then
   echo "Removed the floatterm hook from $settings for:"

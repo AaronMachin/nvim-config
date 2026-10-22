@@ -351,9 +351,12 @@ local function answer_window(lines, on_close)
 end
 
 -- Asks `claude -p` the prompt (with `input` on stdin, if any) and calls done(text,
--- error) on the main loop. Returns the process, so it can be stopped.
+-- error) on the main loop. Returns the process, so it can be stopped. An nvim running
+-- in a floatterm tab (as git's editor, say) has that tab's $FLOATTERM_TAB_ID, which is
+-- emptied so this Claude's hooks don't report to the tab.
 local function ask(prompt, input, cwd, done)
-  return vim.system({ "claude", "-p", prompt }, { cwd = cwd, stdin = input, text = true }, function(result)
+  local opts = { cwd = cwd, stdin = input, text = true, env = { FLOATTERM_TAB_ID = "" } }
+  return vim.system({ "claude", "-p", prompt }, opts, function(result)
     vim.schedule(function()
       if result.code == 0 then
         done(vim.trim(result.stdout), nil)

@@ -1,10 +1,14 @@
 #!/bin/bash
 # Claude Code hook for floating-terminal tabs (see lua/floatterm/claude.lua).
 #
-# Claude runs this for SessionStart, UserPromptSubmit, Notification, Stop and
-# SessionEnd with the event's JSON on stdin. Inside a floatterm tab ($FLOATTERM_TAB_ID
-# and $NVIM set) it hands the JSON to that nvim, which updates the tab's record.
-# Anywhere else it does nothing.
+# Claude runs this for SessionStart, UserPromptSubmit, Notification, PostToolUse, Stop
+# and SessionEnd with the event's JSON on stdin. Inside a floatterm tab ($FLOATTERM_TAB_ID
+# and $NVIM set) it hands the JSON and Claude's pid to that nvim, which updates the
+# tab's record. Anywhere else it does nothing.
+#
+# Anything Claude runs inherits $NVIM and $FLOATTERM_TAB_ID, so a `claude -p` started
+# by the tab's Claude runs this too. The pid is how nvim tells them apart: it only
+# listens to the Claude started directly in the tab.
 #
 # It must never hold Claude up or change what Claude does: it always exits 0, prints
 # nothing (stdout from some events becomes context for Claude), and gives up on an
@@ -20,18 +24,51 @@ esac
 # Nothing goes to Claude, including bash's own note when the watchdog is stopped.
 exec >/dev/null 2>&1
 
+# Claude is this script's parent. A shell in between (should Claude start running
+# hooks through one) is stepped over; anything else isn't Claude, so nothing is sent.
+claude=$PPID
+for _ in 1 2; do
+  read -r parent name < <(ps -o ppid=,comm= -p "$claude")
+  case "${name##*/}" in
+    sh | bash | zsh | dash | fish) claude=$parent ;;
+    claude* | node) break ;;
+    *) exit 0 ;;
+  esac
+done
+case "$claude" in
+  '' | *[!0-9]*) exit 0 ;;
+esac
+
 # A file rather than an argument, so the prompt needs no quoting. nvim deletes it
-# after reading; the rm below covers an nvim that never got to it.
+# after reading; the trap covers an nvim that never got to it, and this script being
+# stopped part way.
 payload=$(mktemp "${TMPDIR:-/tmp}/floatterm-hook.XXXXXX") || exit 0
+pid=""
+watchdog=""
+cleanup() {
+  [ -n "$pid" ] && kill "$pid"
+  [ -n "$watchdog" ] && kill "$watchdog"
+  rm -f "$payload"
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM HUP
 cat >"$payload"
 
-expr="luaeval('(function(a) local ok, m = pcall(require, \"floatterm.claude\") if ok then pcall(m.hook, a[1], a[2]) end return 0 end)(_A)', ['$FLOATTERM_TAB_ID', '$payload'])"
+# PostToolUse comes after every tool call, carrying the tool's whole output, and all
+# nvim does with it is clear a "needs you". So nvim isn't handed the file to decode.
+# The event's name is near the start of the JSON.
+call="m.hook(a[1], a[2], a[3])"
+case "$(head -c 4096 "$payload")" in
+  *'"hook_event_name":"PostToolUse"'* | *'"hook_event_name": "PostToolUse"'*)
+    call="if m.tool_used then m.tool_used(a[1], a[3]) end"
+    ;;
+esac
+
+expr="luaeval('(function(a) local ok, m = pcall(require, \"floatterm.claude\") if ok then pcall(function() $call end) end return 0 end)(_A)', ['$FLOATTERM_TAB_ID', '$payload', '$claude'])"
 nvim --clean --headless --server "$NVIM" --remote-expr "$expr" &
 pid=$!
 (sleep 1 && kill "$pid") &
 watchdog=$!
 wait "$pid"
-kill "$watchdog"
-
-rm -f "$payload"
+pid=""
 exit 0

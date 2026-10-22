@@ -254,7 +254,9 @@ local function next_part()
   end
 end
 
-function M.close()
+-- Closes the page. Unless `stay` (you've already gone to another window), it returns
+-- you to the window you opened it from.
+local function close(stay)
   if not page then
     return
   end
@@ -265,13 +267,19 @@ function M.close()
   if api.nvim_win_is_valid(closing.win) then
     api.nvim_win_close(closing.win, true)
   end
-  if api.nvim_win_is_valid(closing.return_win) then
-    api.nvim_set_current_win(closing.return_win)
-    -- Opened from a terminal you were typing in, so carry on typing.
-    if closing.was_terminal and vim.bo[api.nvim_win_get_buf(closing.return_win)].buftype == "terminal" then
-      vim.cmd "startinsert"
-    end
+  if stay or not api.nvim_win_is_valid(closing.return_win) then
+    return
   end
+  api.nvim_set_current_win(closing.return_win)
+  -- Opened from a terminal tab you were typing in and it's still showing, so carry on
+  -- typing.
+  if closing.was_terminal and api.nvim_win_get_buf(closing.return_win) == closing.return_buf then
+    vim.cmd "startinsert"
+  end
+end
+
+function M.close()
+  close(false)
 end
 
 function M.is_open()
@@ -290,7 +298,8 @@ function M.open()
   end
 
   local return_win = api.nvim_get_current_win()
-  local was_terminal = api.nvim_get_mode().mode == "t"
+  local return_buf = api.nvim_get_current_buf()
+  local was_terminal = api.nvim_get_mode().mode == "t" and vim.bo[return_buf].buftype == "terminal"
 
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
@@ -313,7 +322,14 @@ function M.open()
     vim.cmd "stopinsert"
   end
 
-  page = { buf = buf, win = win, return_win = return_win, was_terminal = was_terminal, part = 1 }
+  page = {
+    buf = buf,
+    win = win,
+    return_win = return_win,
+    return_buf = return_buf,
+    was_terminal = was_terminal,
+    part = 1,
+  }
   draw()
   api.nvim_win_set_cursor(win, { FIRST_ROW, 0 })
   draw()
@@ -334,13 +350,16 @@ function M.open()
   page.group = api.nvim_create_augroup("floatterm_config_page", { clear = true })
   api.nvim_create_autocmd("User", { group = page.group, pattern = "FloatTermSettingsChanged", callback = draw })
   api.nvim_create_autocmd("VimResized", { group = page.group, callback = draw })
-  -- Going to another window some other way (a mouse click, say) closes the page.
+  -- Going to another window some other way (a mouse click, say) closes the page and
+  -- leaves you there.
   api.nvim_create_autocmd("WinLeave", {
     group = page.group,
     buffer = buf,
     callback = function()
       if page and not page.prompting then
-        vim.schedule(M.close)
+        vim.schedule(function()
+          close(true)
+        end)
       end
     end,
   })

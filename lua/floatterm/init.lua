@@ -58,9 +58,9 @@ end
 -- spot, and `full` sits on top of either.
 local placement = start_placement()
 
-local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+| next tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows move/resize · Ctrl+Shift+m dock/float · Ctrl+Shift+f full-screen · Ctrl+Shift+h hide hints"
+local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+| next tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows move/resize · Ctrl+Shift+g dock/box · Ctrl+Shift+f full-screen · Ctrl+Shift+h hide hints"
 -- For when the full line won't fit, such as the bottom border of a narrow float.
-local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-m mode · C-S-f full · C-S-h hints"
+local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-g mode · C-S-f full · C-S-h hints"
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
 local function hints_for(width)
@@ -139,26 +139,36 @@ local function split(outer)
   return { terminal = outer }
 end
 
--- The editor rows a float can use: everything above the statusline.
+-- The editor rows a float can use, and the first of them: everything between the tab
+-- line (NvChad's buffer line, when it shows) and the statusline.
 local function editor_area()
-  return vim.o.lines - vim.o.cmdheight - 1, vim.o.columns
+  local tabline = vim.o.showtabline == 2 or (vim.o.showtabline == 1 and #api.nvim_list_tabpages() > 1)
+  local top = tabline and 1 or 0
+  return vim.o.lines - vim.o.cmdheight - 1 - top, vim.o.columns, top
+end
+
+local function shifted(box, top)
+  return box and { row = box.row + top, col = box.col, height = box.height, width = box.width } or nil
 end
 
 -- Boxes for a placement (current by default), border included: outer is the whole
 -- float, terminal the terminal window, tabbar the tab bar's share (nil when off).
+-- Rows are editor rows, below the tab line.
 local function boxes(p)
-  local outer = geometry(p or placement, editor_area())
+  local rows, cols, top = editor_area()
+  local outer = geometry(p or placement, rows, cols)
   local parts = split(outer)
-  return { outer = outer, terminal = parts.terminal, tabbar = parts.tabbar }
+  return { outer = shifted(outer, top), terminal = shifted(parts.terminal, top), tabbar = shifted(parts.tabbar, top) }
 end
 
 -- Where the hints line goes: the row above the float, the row below it, or (with
--- neither free) its bottom border.
-local function hints_row(outer, rows)
-  if outer.row >= 1 then
+-- neither free) its bottom border. Never on the tab line.
+local function hints_row(outer)
+  local rows, _, top = editor_area()
+  if outer.row >= top + 1 then
     return outer.row - 1
   end
-  if outer.row + outer.height < rows then
+  if outer.row + outer.height < top + rows then
     return outer.row + outer.height
   end
   return nil
@@ -200,7 +210,7 @@ end
 local function float_config()
   local layout = boxes()
   local box = layout.terminal
-  local in_footer = hints_shown and hints_row(layout.outer, (editor_area())) == nil
+  local in_footer = hints_shown and hints_row(layout.outer) == nil
 
   -- The border adds a row above and below, and a column either side.
   return {
@@ -208,8 +218,10 @@ local function float_config()
     border = "rounded",
     row = box.row,
     col = box.col,
-    height = box.height - 2,
-    width = box.width - 2,
+    -- At least 1: shrinking the editor can leave a placement too small to draw, and
+    -- nvim refuses a zero size.
+    height = math.max(1, box.height - 2),
+    width = math.max(1, box.width - 2),
     title = title(layout),
     title_pos = "center",
     footer = in_footer and (" " .. hints_for(box.width - 2) .. " ") or "",
@@ -229,9 +241,9 @@ end
 local function show_hints()
   close_hints()
 
-  local rows, cols = editor_area()
+  local _, cols = editor_area()
   local outer = boxes().outer
-  local row = hints_row(outer, rows)
+  local row = hints_row(outer)
   if not hints_shown or row == nil then
     return
   end
@@ -307,7 +319,8 @@ local function map_tab_keys(buf)
   map("<C-S-Right>", function() M.move "right" end, "terminal dock right or move box right")
   map("<C-S-Up>", function() M.move "top" end, "terminal dock top or move box up")
   map("<C-S-Down>", function() M.move "bottom" end, "terminal dock bottom or move box down")
-  map("<C-S-m>", M.switch_mode, "terminal switch between docked and floating box")
+  -- Not Ctrl+Shift+m: Neovim reads that as Shift+Enter, which Claude needs for new lines.
+  map("<C-S-g>", M.switch_mode, "terminal switch between docked and floating box")
   map("<C-S-f>", M.toggle_fullscreen, "terminal full-screen on or off")
   map("<C-S-h>", M.toggle_hints, "terminal show or hide key hints")
   for _, key in ipairs(extra_keys) do
@@ -617,6 +630,9 @@ api.nvim_create_autocmd("WinClosed", {
 })
 
 api.nvim_create_autocmd("VimResized", { callback = relayout })
+-- The tab line coming or going moves the area the float sits in.
+api.nvim_create_autocmd({ "TabEnter", "TabClosed" }, { callback = relayout })
+api.nvim_create_autocmd("OptionSet", { pattern = "showtabline", callback = relayout })
 
 api.nvim_create_autocmd("User", {
   pattern = "FloatTermSettingsChanged",
