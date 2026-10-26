@@ -149,6 +149,12 @@ function M.save()
       tab.session_id = record.session_id
       tab.transcript_path = record.transcript_path
       tab.start_ref = record.start_ref
+      -- What the tab bar showed, so a resumed tab doesn't come back blank and "new".
+      -- Working when nvim quit means stopped mid-way, which reads as done.
+      tab.title = record.title ~= record.shell_title and record.title or nil
+      tab.last_prompt = record.last_prompt
+      tab.status = record.status == "working" and "done" or record.status
+      tab.status_since = record.status_since
     else
       -- An idle shell's command is the shell itself, so only a running one counts.
       local ok, tabbar = pcall(require, "floatterm.tabbar")
@@ -263,6 +269,12 @@ local function reopen(tab, report)
     session_id = tab.session_id,
     start_ref = tab.start_ref,
     show = false,
+  })
+  floatterm.update(buf, {
+    title = tab.title or vim.NIL,
+    last_prompt = tab.last_prompt or vim.NIL,
+    status = tab.status or vim.NIL,
+    status_since = tab.status_since or vim.NIL,
   })
   report.opened = report.opened + 1
   local started = vim.uv.now()

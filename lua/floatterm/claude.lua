@@ -182,8 +182,14 @@ local function apply(record, event, pid)
     claude.cwd = cwd
     claude.transcript_path = type(event.transcript_path) == "string" and event.transcript_path or nil
     -- The shell's own title (user@host:path) is still there until Claude sets one;
-    -- the tab bar mustn't show it as what Claude is working on.
-    claude.shell_title = vim.b[record.buf].term_title or vim.NIL
+    -- the tab bar mustn't show it as what Claude is working on. Only when the tab was a
+    -- shell a moment ago, and the title doesn't look like Claude's (which starts with
+    -- a symbol such as ✳): a resumed Claude has already set its summary by now.
+    local title = vim.b[record.buf].term_title
+    local looks_like_claude = type(title) == "string" and not title:match "^[%w%s]"
+    if record.kind == "shell" and title and not looks_like_claude then
+      claude.shell_title = title
+    end
     floatterm.update(record.buf, claude)
     record_start_ref(record)
   elseif name == "UserPromptSubmit" then
