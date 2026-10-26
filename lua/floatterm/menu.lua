@@ -1,6 +1,7 @@
--- The floating terminal's options panel, like the panel <leader> brings up:
--- Ctrl+Shift+Space in a tab shows every action with its key in the middle of the screen, and the next
--- plain key runs one. Esc, or a key that isn't listed, closes it and does nothing.
+-- The floating terminal's actions, each with a plain key: listed under <leader>o for
+-- which-key, and in a panel that Ctrl+Shift+Space opens in a tab (where the terminal app
+-- passes that key on). Each shows its direct shortcut too, so the listing teaches the
+-- keys it saves you.
 
 local M = {}
 
@@ -19,12 +20,14 @@ local function go_to_tab(n)
   end
 end
 
--- Two columns, top to bottom. Each entry is { keys shown, what it does, { key = action } }.
+-- Two columns, top to bottom. Each entry is { keys shown, what it does, { key = action },
+-- direct shortcut }. The shortcut does the same from inside a terminal tab, and is shown
+-- beside the action so it can be learnt; a table gives one per key.
 M.columns = {
   {
-    { "d", "split ↔ float", { d = function() floatterm().toggle_split() end } },
-    { "f", "full-screen", { f = function() floatterm().toggle_fullscreen() end } },
-    { "g", "dock ↔ box", { g = function() floatterm().switch_mode() end } },
+    { "d", "split ↔ float", { d = function() floatterm().toggle_split() end }, "Ctrl+Shift+d" },
+    { "f", "full-screen", { f = function() floatterm().toggle_fullscreen() end }, "Ctrl+Shift+f" },
+    { "g", "dock ↔ box", { g = function() floatterm().switch_mode() end }, "Ctrl+Shift+g" },
     {
       "h j k l",
       "move / resize",
@@ -34,15 +37,17 @@ M.columns = {
         k = function() floatterm().move "top" end,
         l = function() floatterm().move "right" end,
       },
+      { h = "Ctrl+Shift+h", j = "Ctrl+Shift+j", k = "Ctrl+Shift+k", l = "Ctrl+Shift+l" },
+      { h = "move left / resize", j = "move down / resize", k = "move up / resize", l = "move right / resize" },
     },
-    { "s", "settings", { s = function() require("floatterm.config_page").open() end } },
-    { "q", "hide", { q = function() floatterm().toggle() end } },
+    { "s", "settings", { s = function() require("floatterm.config_page").open() end }, "Ctrl+Shift+," },
+    { "q", "hide or show", { q = function() floatterm().toggle() end }, "Ctrl+\\" },
   },
   {
-    { "t", "new tab", { t = function() floatterm().new_tab() end } },
-    { "n", "next tab", { n = function() floatterm().next_tab() end } },
-    { "p", "previous tab", { p = function() floatterm().previous_tab() end } },
-    { "b", "tab bar", { b = function() require("floatterm.tabbar").enter() end } },
+    { "t", "new tab", { t = function() floatterm().new_tab() end }, "Ctrl+t" },
+    { "n", "next tab", { n = function() floatterm().next_tab() end }, "Ctrl+Shift+n" },
+    { "p", "previous tab", { p = function() floatterm().previous_tab() end }, "Ctrl+Shift+p" },
+    { "b", "tab bar", { b = function() require("floatterm.tabbar").enter() end }, "Ctrl+Shift+b" },
     {
       "1-9",
       "go to tab",
@@ -57,6 +62,24 @@ M.columns = {
   },
 }
 
+-- What an entry does, with its shortcut: "split ↔ float (Ctrl+Shift+d)". Given one of
+-- several keys (h of h j k l), that key's own shortcut; for the whole entry, all of
+-- them together ("Ctrl+Shift+h/j/k/l").
+local function describe(entry, key)
+  local shortcut = entry[4]
+  if type(shortcut) == "table" then
+    if key then
+      shortcut = shortcut[key]
+    else
+      local keys = vim.split(entry[1], " ")
+      shortcut = shortcut[keys[1]]:gsub("%w$", "") .. table.concat(keys, "/")
+    end
+  end
+  -- An optional fifth field names each key's action on its own.
+  local text = key and entry[5] and entry[5][key] or entry[2]
+  return shortcut and (text .. " (" .. shortcut .. ")") or text
+end
+
 -- The panel's lines, and where each key sits in them (row, first byte, last byte) so
 -- the keys can stand out from what they do.
 local function lines()
@@ -64,7 +87,7 @@ local function lines()
   for _, column in ipairs(M.columns) do
     for _, entry in ipairs(column) do
       key_width = math.max(key_width, vim.fn.strdisplaywidth(entry[1]))
-      text_width = math.max(text_width, vim.fn.strdisplaywidth(entry[2]))
+      text_width = math.max(text_width, vim.fn.strdisplaywidth(describe(entry)))
     end
   end
 
@@ -82,7 +105,7 @@ local function lines()
       end
       if entry then
         table.insert(keys, { i - 1, #line, #line + #entry[1] })
-        line = line .. pad(entry[1], key_width) .. "  " .. pad(entry[2], text_width)
+        line = line .. pad(entry[1], key_width) .. "  " .. pad(describe(entry), text_width)
       else
         line = line .. string.rep(" ", key_width + 2 + text_width)
       end
@@ -150,7 +173,7 @@ function M.setup()
   for _, column in ipairs(M.columns) do
     for _, entry in ipairs(column) do
       for key, action in pairs(entry[3]) do
-        local desc = entry[1] == "1-9" and ("go to tab " .. key) or entry[2]
+        local desc = entry[1] == "1-9" and ("go to tab " .. key) or describe(entry, key)
         vim.keymap.set("n", "<leader>o" .. key, action, { desc = desc })
       end
     end

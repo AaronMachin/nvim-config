@@ -35,7 +35,7 @@ local ROWS = {
     label = "Starting position",
     choices = { { "bottom", "bottom" }, { "top", "top" }, { "left", "left" }, { "right", "right" }, { "box", "box" }, { "split", "split" } },
     -- The float only reads it when nvim starts.
-    note = "from the next nvim",
+    note = "for a project that hasn't used the terminal yet",
   },
   {
     key = "dock_sizes",

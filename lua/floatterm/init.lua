@@ -66,12 +66,59 @@ local function start_placement()
   return placement
 end
 
+-- Each project (the folder nvim was started in) remembers where the terminal last was,
+-- full-screen and split included, in stdpath("data")/floatterm-placement/. The
+-- start_position setting is only for a project with nothing remembered yet.
+-- A field rather than a local so tests can point it somewhere else.
+-- The vim.g overrides are for tests, set with --cmd before the config loads.
+M.placement_dir = vim.g.floatterm_placement_dir or (vim.fn.stdpath "data" .. "/floatterm-placement")
+
+local function placement_file()
+  -- Not for nvim opened on files (git's editor, say) or headless runs.
+  -- The --headless flag rather than nvim_list_uis(): no UI has attached yet while the
+  -- config loads, even in a normal start.
+  if vim.fn.argc() > 0 or (vim.tbl_contains(vim.v.argv, "--headless") and not vim.g.floatterm_placement_dir) then
+    return nil
+  end
+  local folder = vim.uv.fs_realpath(vim.uv.cwd())
+  return folder and (M.placement_dir .. "/" .. folder:gsub("/", "%%") .. ".json") or nil
+end
+
+-- The remembered placement over the defaults, so a field added later still has a value.
+local function remembered_placement()
+  local placement = start_placement()
+  local path = placement_file()
+  local file = path and io.open(path, "r")
+  if not file then
+    return placement
+  end
+  local ok, saved = pcall(vim.json.decode, file:read "*a")
+  file:close()
+  if ok and type(saved) == "table" then
+    placement = vim.tbl_deep_extend("force", placement, saved)
+  end
+  return placement
+end
+
+local function remember_placement(p)
+  local path = placement_file()
+  if not path then
+    return
+  end
+  vim.fn.mkdir(M.placement_dir, "p")
+  local file = io.open(path, "w")
+  if file then
+    file:write(vim.json.encode(p))
+    file:close()
+  end
+end
+
 -- Where the float is. Docked, `edge` and `size` apply; floating, `cell` does (0-2 each
 -- way, starting in the centre). Both are kept so switching back returns to the last
 -- spot, and `full` sits on top of either. With split.on, the terminal is a real split
 -- at split.edge taking split.size of the editor, and the float's spot is kept for
 -- when it goes back.
-local placement = start_placement()
+local placement = remembered_placement()
 
 -- Everything else is in the options panel (lua/floatterm/menu).
 local HINTS = "Ctrl+x then <leader>o for options"
@@ -694,6 +741,7 @@ local function place(next)
     win = nil
   end
   placement = next
+  remember_placement(placement)
   if #tabs == 0 then
     M.new_tab()
   else

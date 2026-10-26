@@ -87,6 +87,21 @@ return {
     opts = function()
       return { terminal = { provider = require("agent").provider } }
     end,
+    config = function(_, opts)
+      require("claudecode").setup(opts)
+      -- It only skips its own terminal when telling Claude which file you're in, so any
+      -- other terminal tab (the shell a claude was typed in, say) showed up in Claude
+      -- as "In zsh". Skip every terminal; files are still reported as before.
+      local selection = require "claudecode.selection"
+      local update = selection.update_selection
+      selection.update_selection = function(...)
+        if vim.bo.buftype == "terminal" then
+          selection._cancel_demotion_timer()
+          return
+        end
+        return update(...)
+      end
+    end,
   },
 
   -- Xdebug through Sail (see lua/debugger)
