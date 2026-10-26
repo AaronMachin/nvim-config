@@ -73,8 +73,8 @@ end
 -- when it goes back.
 local placement = start_placement()
 
--- Everything else is in the Ctrl+Space panel (lua/floatterm/menu).
-local HINTS = "Ctrl+Space for options"
+-- Everything else is in the options panel (lua/floatterm/menu).
+local HINTS = "Ctrl+Shift+Space for options"
 local SHORT_HINTS = HINTS
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
@@ -468,8 +468,10 @@ local function map_tab_keys(buf)
   end
 
   map("<C-t>", M.new_tab, "terminal new tab")
-  -- Ctrl+Space reaches nvim as <C-Space> or, in some terminal apps, as NUL (<C-@>).
-  for _, lhs in ipairs { "<C-Space>", "<C-@>" } do
+  -- Ctrl+Shift+Space, as macOS keeps Ctrl+Space for switching input sources. Plain
+  -- Ctrl+Space (<C-Space>, or NUL as <C-@> in some terminal apps) works too where it
+  -- gets through.
+  for _, lhs in ipairs { "<C-S-Space>", "<C-Space>", "<C-@>" } do
     map(lhs, function() require("floatterm.menu").open() end, "terminal options panel")
   end
   map("<C-S-\\>", M.next_tab, "terminal next tab")

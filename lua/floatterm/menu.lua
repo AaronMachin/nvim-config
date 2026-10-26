@@ -1,5 +1,5 @@
--- The floating terminal's options panel, like the panel <leader> brings up: Ctrl+Space
--- in a tab shows every action with its key in the middle of the screen, and the next
+-- The floating terminal's options panel, like the panel <leader> brings up:
+-- Ctrl+Shift+Space in a tab shows every action with its key in the middle of the screen, and the next
 -- plain key runs one. Esc, or a key that isn't listed, closes it and does nothing.
 
 local M = {}
