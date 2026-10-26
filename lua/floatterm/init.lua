@@ -577,7 +577,13 @@ function M.new_tab(argv, opts)
   if show then
     show_current()
   end
-  local env = vim.tbl_extend("force", opts.env or {}, { FLOATTERM_TAB_ID = tostring(record.id) })
+  local env = vim.tbl_extend("force", opts.env or {}, {
+    FLOATTERM_TAB_ID = tostring(record.id),
+    -- Claude Code's fullscreen renderer draws on the alternate screen, which has no
+    -- scrollback, so Ctrl+x then Ctrl+u/d had nothing to scroll in a Claude tab. The
+    -- classic renderer writes ordinary lines, like a shell. Only in these tabs.
+    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = "1",
+  })
   api.nvim_buf_call(buf, function()
     -- A bare { shell } is deleted by Neovim's own TermClose handler before ours
     -- runs, taking the float with it. -i is what the shell would be anyway.
