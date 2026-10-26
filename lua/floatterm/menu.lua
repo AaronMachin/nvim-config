@@ -144,4 +144,20 @@ function M.open()
   end
 end
 
+-- The same actions under <leader>o, so the which-key panel lists them like any other
+-- leader group. From a terminal tab, Ctrl+x first to leave typing.
+function M.setup()
+  for _, column in ipairs(M.columns) do
+    for _, entry in ipairs(column) do
+      for key, action in pairs(entry[3]) do
+        local desc = entry[1] == "1-9" and ("go to tab " .. key) or entry[2]
+        vim.keymap.set("n", "<leader>o" .. key, action, { desc = desc })
+      end
+    end
+  end
+  pcall(function()
+    require("which-key").add { { "<leader>o", group = "terminal" } }
+  end)
+end
+
 return M

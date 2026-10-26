@@ -87,6 +87,7 @@ map("n", "<leader>gm", agent "commit_message", { desc = "git commit message from
 require("floatterm.tabbar").setup()
 require("floatterm.bookmark").setup()
 require("floatterm.config_page").setup()
+require("floatterm.menu").setup()
 map("n", "<leader>ab", function()
   require("floatterm.bookmark").toggle()
 end, { desc = "claude show or hide the sessions bookmark" })

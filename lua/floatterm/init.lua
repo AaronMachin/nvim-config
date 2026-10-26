@@ -74,7 +74,7 @@ end
 local placement = start_placement()
 
 -- Everything else is in the options panel (lua/floatterm/menu).
-local HINTS = "Ctrl+Shift+Space for options"
+local HINTS = "Ctrl+x then <leader>o for options"
 local SHORT_HINTS = HINTS
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
