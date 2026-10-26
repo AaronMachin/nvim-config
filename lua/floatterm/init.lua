@@ -515,6 +515,17 @@ local function map_tab_keys(buf)
   end
 
   map("<C-t>", M.new_tab, "terminal new tab")
+  -- In a Claude tab, Ctrl+u/d scroll the conversation while you type: Claude draws it
+  -- on the alternate screen, which nvim can't scroll, so they send Claude its own
+  -- PageUp/PageDown. Anywhere else they go to the shell as usual.
+  for lhs, keys in pairs { ["<C-u>"] = { "\27[5~", "\21" }, ["<C-d>"] = { "\27[6~", "\4" } } do
+    vim.keymap.set("t", lhs, function()
+      local record = M.record(buf)
+      if record and record.job then
+        api.nvim_chan_send(record.job, record.kind == "claude" and keys[1] or keys[2])
+      end
+    end, { buffer = buf, desc = "terminal scroll Claude, or the key as usual" })
+  end
   -- Ctrl+Shift+Space, as macOS keeps Ctrl+Space for switching input sources. Plain
   -- Ctrl+Space (<C-Space>, or NUL as <C-@> in some terminal apps) works too where it
   -- gets through.
@@ -579,10 +590,6 @@ function M.new_tab(argv, opts)
   end
   local env = vim.tbl_extend("force", opts.env or {}, {
     FLOATTERM_TAB_ID = tostring(record.id),
-    -- Claude Code's fullscreen renderer draws on the alternate screen, which has no
-    -- scrollback, so Ctrl+x then Ctrl+u/d had nothing to scroll in a Claude tab. The
-    -- classic renderer writes ordinary lines, like a shell. Only in these tabs.
-    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = "1",
   })
   api.nvim_buf_call(buf, function()
     -- A bare { shell } is deleted by Neovim's own TermClose handler before ours
