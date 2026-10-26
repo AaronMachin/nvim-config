@@ -73,9 +73,9 @@ end
 -- when it goes back.
 local placement = start_placement()
 
-local HINTS = "Ctrl+\\ hide · Ctrl+t new tab · Ctrl+x scroll/copy, i to type · Ctrl+Shift+arrows or h/j/k/l move/resize · Ctrl+Shift+g dock/box · Ctrl+Shift+d split · Ctrl+Shift+f full-screen · Ctrl+Shift+n/p next/previous tab"
--- For when the full line won't fit, such as the bottom border of a narrow float.
-local SHORT_HINTS = "C-\\ hide · C-t tab · C-| next · C-x copy · C-S-arrows move · C-S-g mode · C-S-d split · C-S-f full · C-S-n/p tabs"
+-- Everything else is in the Ctrl+Space panel (lua/floatterm/menu).
+local HINTS = "Ctrl+Space for options"
+local SHORT_HINTS = HINTS
 
 -- The full hints if they fit in `width` columns with a space either side, else the short ones.
 local function hints_for(width)
@@ -468,6 +468,10 @@ local function map_tab_keys(buf)
   end
 
   map("<C-t>", M.new_tab, "terminal new tab")
+  -- Ctrl+Space reaches nvim as <C-Space> or, in some terminal apps, as NUL (<C-@>).
+  for _, lhs in ipairs { "<C-Space>", "<C-@>" } do
+    map(lhs, function() require("floatterm.menu").open() end, "terminal options panel")
+  end
   map("<C-S-\\>", M.next_tab, "terminal next tab")
   map("<C-S-n>", M.next_tab, "terminal next tab")
   map("<C-S-p>", M.previous_tab, "terminal previous tab")
