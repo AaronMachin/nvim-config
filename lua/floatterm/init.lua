@@ -509,12 +509,44 @@ local function hide()
   fire("FloatTermLayoutChanged", { open = false })
 end
 
+-- Copies a visual selection from a terminal tab without the breaks the terminal added.
+-- A line wider than the tab is split across screen lines, and each becomes its own
+-- buffer line, so a long command copied as two. A line that reaches the right edge
+-- (or Claude's 2-column margin before it) is taken to carry on in the next one, which
+-- is joined on without its leading spaces. Lines ending short of the edge keep their
+-- break.
+local function yank_unwrapped()
+  local mode = vim.fn.mode()
+  local from, to = vim.fn.getpos "v", vim.fn.getpos "."
+  local pieces = vim.fn.getregion(from, to, { type = mode })
+  local first = math.min(from[2], to[2])
+  local edge = api.nvim_win_get_width(0) - 2
+
+  local text = pieces[1] or ""
+  for i = 2, #pieces do
+    local previous = api.nvim_buf_get_lines(0, first + i - 3, first + i - 2, false)[1] or ""
+    if vim.fn.strdisplaywidth(previous) >= edge then
+      text = text .. pieces[i]:gsub("^%s+", "")
+    else
+      text = text .. "\n" .. pieces[i]
+    end
+  end
+  if mode == "V" then
+    text = text .. "\n"
+  end
+
+  vim.fn.setreg("+", text, mode == "V" and "l" or "c")
+  vim.fn.setreg('"', text, mode == "V" and "l" or "c")
+  api.nvim_feedkeys(api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+end
+
 local function map_tab_keys(buf)
   local function map(lhs, rhs, desc)
     vim.keymap.set({ "n", "t" }, lhs, rhs, { buffer = buf, desc = desc })
   end
 
   map("<C-t>", M.new_tab, "terminal new tab")
+  vim.keymap.set("x", "y", yank_unwrapped, { buffer = buf, desc = "terminal copy without the wrap breaks" })
   -- In a Claude tab, Ctrl+u/d scroll the conversation while you type: Claude draws it
   -- on the alternate screen, which nvim can't scroll, so they send Claude its own
   -- PageUp/PageDown. Anywhere else they go to the shell as usual.
