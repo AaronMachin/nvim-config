@@ -49,6 +49,20 @@ local ROWS = {
   { key = "hints", label = "Key hints", choices = { { true, "shown" }, { false, "hidden" } } },
   { key = "reopen_tabs", label = "Reopen tabs on start", choices = { { true, "yes" }, { false, "no" } } },
   { key = "bookmark", label = "Claude bookmark", choices = { { true, "shown" }, { false, "hidden" } } },
+  {
+    key = "notes_side",
+    label = "Notes side",
+    choices = { { "left", "left" }, { "right", "right" }, { "top", "top" }, { "bottom", "bottom" } },
+  },
+  -- Kept as a fraction, shown and typed as a percentage.
+  { key = "notes_share", label = "Notes size", number = { min = 15, max = 60, step = 5, percent = true } },
+  {
+    key = "claude_notes",
+    label = "Claude's notes",
+    choices = { { true, "on" }, { false, "off" } },
+    note = "kept up to date after each turn",
+  },
+  { key = "claude_notes_model", label = "Claude's notes model", choices = { { "haiku", "haiku" }, { "sonnet", "sonnet" } } },
 }
 
 local page = nil
@@ -95,7 +109,7 @@ local function render_row(row, selected)
       add(choice[2], i == current and "FloatTermSettingsValue" or "Comment", i == current)
     end
   elseif row.number then
-    add(tostring(value), "FloatTermSettingsValue", selected)
+    add(row.number.percent and (percent(value) .. "%") or tostring(value), "FloatTermSettingsValue", selected)
   else
     for i, part in ipairs(row.parts) do
       add(part.name .. " " .. percent(value[part.name]) .. "%", "FloatTermSettingsValue", selected and page.part == i)
@@ -178,10 +192,12 @@ local function set_number(row, wanted, typed)
   if row.number then
     local bounds = row.number
     if typed and (wanted < bounds.min or wanted > bounds.max) then
-      vim.notify(("%s must be %d to %d"):format(row.label, bounds.min, bounds.max), vim.log.levels.WARN)
+      local unit = bounds.percent and "%" or ""
+      vim.notify(("%s must be %d%s to %d%s"):format(row.label, bounds.min, unit, bounds.max, unit), vim.log.levels.WARN)
       return
     end
-    settings.set(row.key, math.min(bounds.max, math.max(bounds.min, wanted)))
+    local value = math.min(bounds.max, math.max(bounds.min, wanted))
+    settings.set(row.key, bounds.percent and value / 100 or value)
     return
   end
 
@@ -198,7 +214,8 @@ end
 
 local function current_number(row)
   if row.number then
-    return settings.get(row.key), row.number.step
+    local value = settings.get(row.key)
+    return row.number.percent and percent(value) or value, row.number.step
   end
   local part = row.parts[page.part]
   return percent(settings.get(row.key)[part.name]), part.step
@@ -229,7 +246,8 @@ local function enter()
   end
 
   local value = current_number(row)
-  local name = row.number and row.label or (row.label .. ", " .. row.parts[page.part].name .. " (%)")
+  local name = row.number and (row.label .. (row.number.percent and " (%)" or ""))
+    or (row.label .. ", " .. row.parts[page.part].name .. " (%)")
   -- A prompt in its own window would otherwise count as leaving the page.
   page.prompting = true
   vim.ui.input({ prompt = name .. ": ", default = tostring(value) }, function(input)

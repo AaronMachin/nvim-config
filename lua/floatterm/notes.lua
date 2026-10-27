@@ -15,7 +15,12 @@
 -- that box, in the same way as the tab bar, so every placement draws it the same way:
 -- Claude's part on top when there is one, yours below. Where there's no box (the
 -- floating box placement, or no room), Ctrl+Shift+e shows it over the terminal
--- instead, until Ctrl+Shift+e or Esc goes back.
+-- instead, until Ctrl+Shift+e or Esc goes back. A prompt or picker opened from the
+-- notes (<leader>o a, <leader>o o) doesn't put them away.
+--
+-- Going into yours puts the cursor on an empty line at the end, typing. Claude's part
+-- shows what fits, and its title says how many lines don't; Ctrl+Shift+o in yours
+-- shows all of it in a large float to scroll and copy from.
 --
 -- Captures go at the end of yours: Y on a selection in a terminal tab, <leader>o y on
 -- a selection in code, <leader>o a for a one-line note.
@@ -38,14 +43,25 @@ local SIDES = {
 -- The folder nvim was started in, found once. A field so tests can point it elsewhere.
 M.folder = nil
 
--- The pane's windows, the tab buffer whose notes they show, and whether they're shown
--- over the terminal rather than in a box of their own.
-local pane = { mine = nil, claude = nil, buf = nil, overlay = false }
+-- The pane's windows, the tab buffer whose notes they show, whether they're shown over
+-- the terminal rather than in a box of their own, and whether the cursor has gone from
+-- yours into a prompt or popup it'll come back from.
+local pane = { mine = nil, claude = nil, buf = nil, overlay = false, away = false }
 -- Claude's part of each note, by note_id: a scratch buffer holding the file's text.
 local claude_bufs = {}
 -- Buffers whose keys are set: notes buffers, and terminal tabs (for Y).
 local configured = {}
 local tab_keys = {}
+-- The heading each note of yours was made with in this nvim, by note_id, so one
+-- you've changed isn't taken for empty.
+local created = {}
+-- Set while the pane closes its own windows, so WinClosed can tell those from a :q.
+local closing = false
+-- The window the cursor was last in before the one it's in now. Kept on WinLeave, as
+-- WinEnter can't ask once a prompt has closed and taken its window with it.
+local left = nil
+-- Ctrl+Shift+h/j/k/l towards the side the pane is already on steps through these.
+local SHARES = { 0.25, 0.35, 0.5 }
 
 local function folder()
   if not M.folder then
@@ -144,10 +160,12 @@ local function ensure_note(record)
   end
   local paths = M.paths(record)
   if not vim.uv.fs_stat(paths.mine) then
+    local heading = "# " .. floatterm().name(record)
     local file = io.open(paths.mine, "w")
     if file then
-      file:write("# " .. floatterm().name(record) .. "\n")
+      file:write(heading .. "\n")
       file:close()
+      created[record.note_id] = heading
     end
   end
   return paths
@@ -204,6 +222,12 @@ local function claude_buf(note_id)
   return buf
 end
 
+local function close_win(win)
+  closing = true
+  pcall(api.nvim_win_close, win, true)
+  closing = false
+end
+
 local function close_windows()
   for _, key in ipairs { "mine", "claude" } do
     local win = pane[key]
@@ -211,7 +235,7 @@ local function close_windows()
       if key == "mine" then
         save(api.nvim_win_get_buf(win))
       end
-      pcall(api.nvim_win_close, win, true)
+      close_win(win)
     end
     pane[key] = nil
   end
@@ -263,35 +287,59 @@ local function display_lines(buf, width)
   return count
 end
 
+-- Claude's part's title: with how many lines don't fit and the key that shows them
+-- all, shortened when the part is narrow.
+local function claude_title(hidden, width)
+  if hidden > 0 then
+    for _, title in ipairs {
+      (" ✳ Claude · %d more %s · Ctrl+Shift+o "):format(hidden, hidden == 1 and "line" or "lines"),
+      (" ✳ Claude · %d more · C-S-o "):format(hidden),
+    } do
+      if vim.fn.strdisplaywidth(title) <= width then
+        return title
+      end
+    end
+  end
+  return " ✳ Claude "
+end
+
 -- Draws a tab's notes into `box` (border included, editor rows): Claude's part on top
--- for a Claude tab or once Claude has written some, yours below.
+-- for a Claude tab (with Claude's notes on) or once Claude has written some, yours
+-- below.
 local function draw(record, box, overlay)
   local paths = M.paths(record)
   local mine = mine_buf(record)
   local width = math.max(1, box.width - 2)
   local zindex = overlay and 60 or 50
-  local show_claude = (record.kind == "claude" or vim.uv.fs_stat(paths.claude) ~= nil) and box.height >= 6
+  local show_claude = ((record.kind == "claude" and settings.get "claude_notes") or vim.uv.fs_stat(paths.claude) ~= nil)
+    and box.height >= 6
 
   local top, height = box.row, box.height
   if show_claude then
     local cbuf = claude_buf(record.note_id)
-    local most = math.max(1, math.floor(box.height * CLAUDE_SHARE) - 2)
     -- Yours keeps at least one line.
-    local inner = math.max(1, math.min(most, display_lines(cbuf, width), box.height - 5))
-    place("claude", cbuf, {
+    local room = math.max(1, math.min(math.floor(box.height * CLAUDE_SHARE) - 2, box.height - 5))
+    local config = {
       relative = "editor",
       row = box.row,
       col = box.col,
       width = width,
-      height = inner,
+      height = math.max(1, math.min(room, display_lines(cbuf, width))),
       border = "rounded",
       title = " ✳ Claude ",
       title_pos = "center",
       zindex = zindex,
-    }, vim.b[cbuf].floatterm_notes_empty and "NormalFloat:Comment" or nil)
-    top, height = box.row + inner + 2, box.height - inner - 2
+    }
+    place("claude", cbuf, config, vim.b[cbuf].floatterm_notes_empty and "NormalFloat:Comment" or nil)
+    -- Counted again in the window: wrapping at word breaks can take more lines than
+    -- the estimate.
+    local total = api.nvim_win_text_height(pane.claude, {}).all
+    config.height = math.max(1, math.min(room, total))
+    config.title = claude_title(total - config.height, width)
+    api.nvim_win_set_config(pane.claude, config)
+    top, height = box.row + config.height + 2, box.height - config.height - 2
   elseif pane.claude and api.nvim_win_is_valid(pane.claude) then
-    pcall(api.nvim_win_close, pane.claude, true)
+    close_win(pane.claude)
     pane.claude = nil
   end
 
@@ -432,15 +480,16 @@ function M.toggle_focus()
   pane.overlay = ft.layout().notes == nil
   M.redraw()
   if pane.mine and api.nvim_win_is_valid(pane.mine) then
+    -- WinEnter puts the cursor on an empty line at the end, typing.
     api.nvim_set_current_win(pane.mine)
-    -- Opening the float asks for terminal mode once this returns.
-    vim.cmd "stopinsert"
   end
 end
 
 -- Ctrl+\ from the notes does what it does from the terminal: hides the float, or in
 -- the split goes to the code.
 function M.hide_float()
+  -- Wherever the cursor lands, it isn't typing into whatever is there.
+  vim.cmd "stopinsert"
   local ft = floatterm()
   if pane.mine and api.nvim_win_is_valid(pane.mine) then
     save(api.nvim_win_get_buf(pane.mine))
@@ -461,9 +510,31 @@ function M.hide_float()
   end
 end
 
-local function move_to(side)
-  settings.set("notes_side", side)
-  -- The move rebuilds the pane; the cursor stays in it.
+-- The size after `share` in SHARES, going round to the first.
+local function next_share(share)
+  for _, step in ipairs(SHARES) do
+    if step > share + 0.001 then
+      return step
+    end
+  end
+  return SHARES[1]
+end
+
+-- Ctrl+Shift+h/j/k/l in the notes: towards the side the pane is on makes it bigger
+-- (round to the smallest again), another side moves it there. Both are remembered.
+local function side_key(side)
+  local ft = floatterm()
+  if side == settings.get "notes_side" then
+    settings.set("notes_share", next_share(settings.get "notes_share"))
+  else
+    settings.set("notes_side", side)
+  end
+  -- No longer fitting beside the terminal, the pane shows over it rather than closing
+  -- under the cursor.
+  if in_pane(api.nvim_get_current_win()) and ft.layout().notes == nil then
+    pane.overlay = true
+  end
+  -- This rebuilds the pane; the cursor stays in it.
   M.redraw()
   if pane.mine and api.nvim_win_is_valid(pane.mine) then
     api.nvim_set_current_win(pane.mine)
@@ -478,8 +549,94 @@ local function on_escape()
   end
 end
 
--- The terminal's keys on a notes buffer, with Ctrl+Shift+h/j/k/l moving the pane
--- rather than the terminal.
+-- Ctrl+Shift+o in your notes: all of Claude's notes for the tab in a large float, to
+-- scroll, select and copy from (y copies to the system clipboard). q or Esc goes back
+-- to where you were in yours, typing if you were.
+function M.read_claude()
+  local from_win, from_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
+  -- Your notes' file is <note_id>.md.
+  local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
+  local lines = note_id and read_lines(paths_for(note_id).claude) or {}
+  if #lines == 0 then
+    vim.notify("No Claude notes for this tab yet", vim.log.levels.INFO)
+    return
+  end
+  local typing = api.nvim_get_mode().mode:sub(1, 1) == "i"
+  local cursor = api.nvim_win_get_cursor(from_win)
+  if typing then
+    vim.cmd "stopinsert"
+  end
+
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].filetype = "markdown"
+
+  local width = math.max(20, math.min(100, vim.o.columns - 6))
+  local most = math.max(3, math.min(math.floor(vim.o.lines * 0.8), vim.o.lines - 6))
+  local record = pane.buf and floatterm().record(pane.buf)
+  local config = {
+    relative = "editor",
+    row = 0,
+    col = math.max(0, math.floor((vim.o.columns - width) / 2) - 1),
+    width = width,
+    height = most,
+    style = "minimal",
+    border = "rounded",
+    title = record and (" ✳ Claude · " .. floatterm().name(record) .. " ") or " ✳ Claude ",
+    title_pos = "center",
+    footer = " q or Esc closes · y copies ",
+    footer_pos = "center",
+    -- Above the pane, even shown over the terminal.
+    zindex = 100,
+  }
+  local win = api.nvim_open_win(buf, true, config)
+  for option, value in pairs { wrap = true, linebreak = true, cursorline = true } do
+    vim.wo[win][option] = value
+  end
+  -- As tall as the notes need, up to most of the editor.
+  config.height = math.max(1, math.min(most, api.nvim_win_text_height(win, {}).all))
+  config.row = math.max(0, math.floor((vim.o.lines - config.height) / 2) - 1)
+  api.nvim_win_set_config(win, config)
+
+  local function back()
+    if api.nvim_win_is_valid(win) then
+      api.nvim_win_close(win, true)
+    end
+    if not api.nvim_win_is_valid(from_win) or api.nvim_win_get_buf(from_win) ~= from_buf then
+      return
+    end
+    api.nvim_set_current_win(from_win)
+    pcall(api.nvim_win_set_cursor, from_win, cursor)
+    if typing then
+      local line = api.nvim_buf_get_lines(from_buf, cursor[1] - 1, cursor[1], false)[1] or ""
+      -- At the end of the line, normal mode can't put the cursor where typing was.
+      vim.cmd(cursor[2] >= #line and "startinsert!" or "startinsert")
+    end
+  end
+  local function map(mode, lhs, rhs)
+    vim.keymap.set(mode, lhs, rhs, { buffer = buf, nowait = true })
+  end
+  map("n", "q", back)
+  map("n", "<Esc>", back)
+  map({ "n", "x" }, "y", '"+y')
+  -- Leaving it some other way (a click elsewhere) closes it there.
+  api.nvim_create_autocmd("WinLeave", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        if api.nvim_win_is_valid(win) then
+          api.nvim_win_close(win, true)
+        end
+      end)
+    end,
+  })
+end
+
+-- The terminal's keys on a notes buffer, with Ctrl+Shift+h/j/k/l moving or sizing the
+-- pane rather than the terminal.
 set_up_buffer = function(buf, editable)
   floatterm().map_keys(buf, { "n" })
   local modes = editable and { "n", "i" } or { "n" }
@@ -488,13 +645,16 @@ set_up_buffer = function(buf, editable)
   end
   for _, keys in ipairs(SIDES) do
     for i = 1, 2 do
-      map(modes, keys[i], function() move_to(keys[3]) end, "notes move to the " .. keys[3])
+      map(modes, keys[i], function() side_key(keys[3]) end, "notes move to the " .. keys[3] .. " (or resize on that side)")
     end
   end
   map(modes, "<C-S-e>", M.toggle_focus, "notes back to the terminal")
-  map(modes, "<C-\\>", M.hide_float, "terminal toggle floating term")
+  -- Normal mode only: in insert mode Ctrl+\ starts Neovim's own Ctrl+\ Ctrl+n and
+  -- Ctrl+\ Ctrl+o.
+  map("n", "<C-\\>", M.hide_float, "terminal toggle floating term")
   map("n", "<Esc>", on_escape, "notes back to the terminal (shown over it)")
   if editable then
+    map(modes, "<C-S-o>", M.read_claude, "notes read all of Claude's notes")
     api.nvim_create_autocmd({ "BufLeave", "FocusLost", "BufHidden", "WinLeave" }, {
       buffer = buf,
       callback = function(args)
@@ -641,11 +801,13 @@ function M.add_note()
   end)
 end
 
--- Deletes a note's file of yours when it holds nothing but its heading and no other
--- tab has it. Kept when Claude has written some, so the picker still finds them.
-local function delete_if_empty(note_id, closing)
+-- Deletes a note's file of yours when it holds nothing but the heading it was made with
+-- and no other tab has it. Kept when Claude has written some, so the picker still finds
+-- them. `name` is the tab's name, for a note made before this nvim started: the heading
+-- it would have been made with.
+local function delete_if_empty(note_id, closing_buf, name)
   for _, record in ipairs(floatterm().tabs()) do
-    if record.note_id == note_id and record.buf ~= closing then
+    if record.note_id == note_id and record.buf ~= closing_buf then
       return
     end
   end
@@ -664,13 +826,14 @@ local function delete_if_empty(note_id, closing)
   if not lines then
     return
   end
-  local heading = false
-  for _, line in ipairs(lines) do
-    if line:match "^# " and not heading then
-      heading = true
-    elseif vim.trim(line) ~= "" then
-      return
-    end
+  -- Blank lines at the end are left by going into the notes (an empty line to type on).
+  -- A file with nothing left in it at all counts as empty too.
+  while #lines > 0 and vim.trim(lines[#lines]) == "" do
+    table.remove(lines)
+  end
+  local heading = created[note_id] or (name and ("# " .. name))
+  if #lines > 1 or (#lines == 1 and lines[1] ~= heading) then
+    return
   end
   if buf ~= -1 then
     if pane.mine and api.nvim_win_is_valid(pane.mine) and api.nvim_win_get_buf(pane.mine) == buf then
@@ -680,6 +843,7 @@ local function delete_if_empty(note_id, closing)
     pcall(api.nvim_buf_delete, buf, { force = true })
   end
   os.remove(paths.mine)
+  created[note_id] = nil
 end
 
 -- Gives the tab `buf` the notes `note_id` and shows them.
@@ -695,7 +859,7 @@ function M.attach(buf, note_id)
   end
   ft.update(buf, { note_id = note_id, notes_on = true })
   if old and old ~= note_id then
-    delete_if_empty(old)
+    delete_if_empty(old, nil, ft.name(record))
   end
 end
 
@@ -852,6 +1016,32 @@ function M.state()
   return vim.deepcopy(pane)
 end
 
+-- A float other than the terminal and its tab bar: a prompt, a picker, a popup.
+local function is_prompt(win)
+  if not api.nvim_win_is_valid(win) or api.nvim_win_get_config(win).relative == "" then
+    return false
+  end
+  local ft, tabbar = package.loaded["floatterm"], package.loaded["floatterm.tabbar"]
+  return not ((ft and win == ft.window()) or (tabbar and win == tabbar.window()))
+end
+
+-- Your notes are typed into at the end, on an empty line (added unless the last line
+-- already is one).
+local function to_fresh_line()
+  local win = pane.mine
+  if not (win and api.nvim_win_is_valid(win) and api.nvim_get_current_win() == win) then
+    return
+  end
+  local buf = api.nvim_win_get_buf(win)
+  local count = api.nvim_buf_line_count(buf)
+  if api.nvim_buf_get_lines(buf, count - 1, count, false)[1] ~= "" then
+    api.nvim_buf_set_lines(buf, count, count, false, { "" })
+    count = count + 1
+  end
+  api.nvim_win_set_cursor(win, { count, 0 })
+  vim.cmd "startinsert"
+end
+
 local set_up = false
 
 function M.setup()
@@ -909,8 +1099,16 @@ function M.setup()
       schedule_redraw()
     end,
   })
-  -- Moving into the split's empty notes window (Ctrl+w, a click) lands in the notes,
-  -- and leaving notes shown over the terminal puts them away.
+  api.nvim_create_autocmd("WinLeave", {
+    group = group,
+    callback = function()
+      left = api.nvim_get_current_win()
+    end,
+  })
+  -- Moving into the split's empty notes window (Ctrl+w, a click) lands in the notes.
+  -- Going into yours from outside the pane starts typing on an empty line at the end.
+  -- A prompt, picker or popup opened from yours is a detour that comes back to where
+  -- you were; anywhere else, notes shown over the terminal are put away.
   api.nvim_create_autocmd("WinEnter", {
     group = group,
     callback = function()
@@ -926,16 +1124,40 @@ function M.setup()
             api.nvim_set_current_win(pane.mine)
           end
         end)
-      elseif pane.overlay and not in_pane(win) then
+      elseif win == pane.mine then
+        local returning = pane.away or left == pane.claude
+        pane.away = false
+        if not returning then
+          vim.schedule(to_fresh_line)
+        end
+      elseif in_pane(win) then
+        return
+      elseif is_prompt(win) then
+        if left == pane.mine then
+          pane.away = true
+        end
+      elseif pane.overlay and pane.away then
+        -- The prompt closed into the terminal rather than back into the notes.
+        vim.schedule(function()
+          local now = api.nvim_get_current_win()
+          if pane.overlay and pane.mine and api.nvim_win_is_valid(pane.mine) and not in_pane(now) and not is_prompt(now) then
+            api.nvim_set_current_win(pane.mine)
+          end
+        end)
+      elseif pane.overlay then
         vim.schedule(function()
           if pane.overlay and not in_pane(api.nvim_get_current_win()) then
             pane.overlay = false
             M.redraw()
           end
         end)
+      else
+        pane.away = false
       end
     end,
   })
+  -- :q in either part closes the whole pane, and where it has a box of its own beside
+  -- the terminal, draws it again whole.
   api.nvim_create_autocmd("WinClosed", {
     group = group,
     callback = function(args)
@@ -944,7 +1166,21 @@ function M.setup()
         pane.mine = nil
       elseif closed == pane.claude then
         pane.claude = nil
+      else
+        return
       end
+      if closing then
+        return
+      end
+      vim.schedule(function()
+        if pane.overlay then
+          pane.overlay = false
+          close_windows()
+        else
+          close_windows()
+          M.redraw()
+        end
+      end)
     end,
   })
   -- Before lua/floatterm drops the tab's record, which happens a moment later.
@@ -960,7 +1196,7 @@ function M.setup()
       if pane.buf == args.buf then
         close()
       end
-      delete_if_empty(record.note_id, args.buf)
+      delete_if_empty(record.note_id, args.buf, ft.name(record))
     end,
   })
   api.nvim_create_autocmd({ "VimLeavePre", "FocusLost" }, {

@@ -1148,13 +1148,20 @@ api.nvim_create_autocmd("WinClosed", {
       -- The bar's window means nothing without the split beside it. Only that bar: by
       -- the time this runs a new split may have opened with a bar of its own, so the
       -- event says whether the terminal is open then rather than assuming not.
-      local orphan = bar_win
+      local orphan, orphan_notes = bar_win, notes_win
       vim.schedule(function()
         if orphan and api.nvim_win_is_valid(orphan) and orphan ~= bar_win then
           pcall(api.nvim_win_close, orphan, true)
         elseif orphan and orphan == bar_win and not win_is_open() then
           pcall(api.nvim_win_close, orphan, true)
           bar_win = nil
+        end
+        -- The notes window held beside the split goes the same way.
+        if orphan_notes and api.nvim_win_is_valid(orphan_notes) and (orphan_notes ~= notes_win or not win_is_open()) then
+          pcall(api.nvim_win_close, orphan_notes, true)
+          if orphan_notes == notes_win then
+            notes_win = nil
+          end
         end
         fire("FloatTermLayoutChanged", { open = win_is_open() })
       end)

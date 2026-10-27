@@ -25,6 +25,10 @@ M.defaults = {
   -- "bottom"), and the share of the terminal's room it takes.
   notes_side = "right",
   notes_share = 0.35,
+  -- Whether Claude's half of a Claude tab's notes is kept up to date after each turn
+  -- (lua/floatterm/claude_notes), and the model that does it: "haiku" or "sonnet".
+  claude_notes = true,
+  claude_notes_model = "haiku",
 }
 
 local values = nil
