@@ -547,6 +547,10 @@ local function map_tab_keys(buf)
     end
   end
   map("<C-S-d>", M.toggle_split, "terminal switch between floating and a split")
+  -- Ctrl+Option+arrows reorder tabs, where the terminal app sends Option as Alt.
+  for lhs, delta in pairs { ["<C-M-Left>"] = -1, ["<C-M-Up>"] = -1, ["<C-M-Right>"] = 1, ["<C-M-Down>"] = 1 } do
+    map(lhs, function() M.move_tab(buf, delta) end, "terminal move tab " .. (delta < 0 and "earlier" or "later"))
+  end
   -- Not Ctrl+Shift+m: Neovim reads that as Shift+Enter, which Claude needs for new lines.
   map("<C-S-g>", M.switch_mode, "terminal switch between docked and floating box")
   map("<C-S-f>", M.toggle_fullscreen, "terminal full-screen on or off")
@@ -721,6 +725,54 @@ function M.next_tab()
 
   current = current % #tabs + 1
   show_current()
+end
+
+-- Moves a tab `delta` places along (-1 earlier, 1 later), stopping at the ends. The
+-- tab showing stays showing.
+function M.move_tab(buf, delta)
+  local from = index_of(buf)
+  if not from then
+    return
+  end
+  local to = math.max(1, math.min(#tabs, from + delta))
+  if to == from then
+    return
+  end
+  local showing = tabs[current]
+  table.insert(tabs, to, table.remove(tabs, from))
+  current = index_of(showing.buf) or current
+  if win_is_open() and not placement.split.on then
+    api.nvim_win_set_config(win, { title = title(boxes()), title_pos = "center" })
+  end
+  fire "FloatTermTabsChanged"
+end
+
+-- Closes the tab showing, for when its program has hung: asks the job to stop, and
+-- kills it outright if it's still running a second later. Asks first for a Claude
+-- tab, as that one is easy to lose by accident.
+function M.close_current()
+  local record = tabs[current]
+  if not record or not record.job then
+    return
+  end
+  local function close()
+    local pid = vim.fn.jobpid(record.job)
+    vim.fn.jobstop(record.job)
+    vim.defer_fn(function()
+      if pid > 0 and vim.uv.kill(pid, 0) == 0 then
+        vim.uv.kill(pid, "sigkill")
+      end
+    end, 1000)
+  end
+  if record.kind ~= "claude" then
+    close()
+    return
+  end
+  vim.ui.select({ "Close it", "Keep it" }, { prompt = "Close the Claude tab " .. M.name(record) .. "?" }, function(choice)
+    if choice == "Close it" then
+      close()
+    end
+  end)
 end
 
 function M.previous_tab()

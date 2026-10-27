@@ -49,6 +49,17 @@ M.columns = {
     { "p", "previous tab", { p = function() floatterm().previous_tab() end }, "Ctrl+Shift+p" },
     { "b", "tab bar", { b = function() require("floatterm.tabbar").enter() end }, "Ctrl+Shift+b" },
     {
+      "< >",
+      "move tab earlier / later",
+      {
+        ["<"] = function() floatterm().move_tab(floatterm().current_buf(), -1) end,
+        [">"] = function() floatterm().move_tab(floatterm().current_buf(), 1) end,
+      },
+      { ["<"] = "Ctrl+Opt+←", [">"] = "Ctrl+Opt+→", all = "Ctrl+Opt+←/→" },
+      { ["<"] = "move tab earlier", [">"] = "move tab later" },
+    },
+    { "x", "close tab (force)", { x = function() floatterm().close_current() end } },
+    {
       "1-9",
       "go to tab",
       (function()
@@ -72,7 +83,7 @@ local function describe(entry, key)
       shortcut = shortcut[key]
     else
       local keys = vim.split(entry[1], " ")
-      shortcut = shortcut[keys[1]]:gsub("%w$", "") .. table.concat(keys, "/")
+      shortcut = shortcut.all or (shortcut[keys[1]]:gsub("%w$", "") .. table.concat(keys, "/"))
     end
   end
   -- An optional fifth field names each key's action on its own.

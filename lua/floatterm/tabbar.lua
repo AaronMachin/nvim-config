@@ -607,6 +607,17 @@ function M.map_bar_keys(buf)
   map("l", function() select(1) end, "tab bar next tab")
   map("h", function() select(-1) end, "tab bar previous tab")
   map("<CR>", open_selected, "tab bar open tab")
+  -- Capitals move the selected tab itself along, and the selection with it.
+  for lhs, delta in pairs { K = -1, H = -1, J = 1, L = 1 } do
+    map(lhs, function()
+      local floatterm = require "floatterm"
+      local record = selected and floatterm.tabs()[selected]
+      if record then
+        floatterm.move_tab(record.buf, delta)
+        select(delta)
+      end
+    end, "tab bar move tab " .. (delta < 0 and "earlier" or "later"))
+  end
   for n = 1, 9 do
     map(tostring(n), function()
       local record = require("floatterm").tabs()[n]
