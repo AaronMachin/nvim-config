@@ -144,7 +144,13 @@ function M.save()
 
   local saved = {}
   for _, record in ipairs(package.loaded.floatterm and require("floatterm").tabs() or {}) do
-    local tab = { kind = record.kind, cwd = record.cwd, label = record.label }
+    local tab = {
+      kind = record.kind,
+      cwd = record.cwd,
+      label = record.label,
+      note_id = record.note_id,
+      notes_on = record.notes_on,
+    }
     if record.kind == "claude" then
       tab.session_id = record.session_id
       tab.transcript_path = record.transcript_path
@@ -242,9 +248,11 @@ local function reopen(tab, report)
   if tab.kind ~= "claude" then
     local cwd = tab.cwd and vim.fn.isdirectory(tab.cwd) == 1 and tab.cwd or folder
     local _, buf = floatterm.new_tab(nil, { cwd = cwd, label = tab.label, show = false })
-    if tab.last_command then
-      floatterm.update(buf, { last_command = tab.last_command })
-    end
+    floatterm.update(buf, {
+      last_command = tab.last_command or vim.NIL,
+      note_id = tab.note_id or vim.NIL,
+      notes_on = tab.notes_on or vim.NIL,
+    })
     report.opened = report.opened + 1
     return false
   end
@@ -257,7 +265,8 @@ local function reopen(tab, report)
   -- Through agent so the tab gets the IDE connection and counts as its folder's
   -- Claude tab.
   if not (tab.session_id and has_transcript(tab)) then
-    require("agent").open(tab.cwd, { label = tab.label, show = false })
+    local fresh = require("agent").open(tab.cwd, { label = tab.label, show = false })
+    floatterm.update(fresh, { note_id = tab.note_id or vim.NIL, notes_on = tab.notes_on or vim.NIL })
     report.opened = report.opened + 1
     table.insert(report.fresh, name_of(tab))
     return false
@@ -271,6 +280,8 @@ local function reopen(tab, report)
     show = false,
   })
   floatterm.update(buf, {
+    note_id = tab.note_id or vim.NIL,
+    notes_on = tab.notes_on or vim.NIL,
     title = tab.title or vim.NIL,
     last_prompt = tab.last_prompt or vim.NIL,
     status = tab.status or vim.NIL,

@@ -32,6 +32,8 @@ local settings = require "floatterm.settings"
 --   status        a Claude tab's "needs_you", "working" or "done", or nil
 --   status_since  os.time() when status last changed
 --   session_id    a Claude tab's conversation, or nil
+--   note_id       the tab's notes (lua/floatterm/notes), kept when notes are off
+--   notes_on      whether the notes pane shows for this tab
 -- Other modules may keep their own fields on a record too.
 local tabs = {}
 local current = 0
@@ -40,6 +42,9 @@ local win = nil
 -- In split placement, an empty window kept beside the terminal for the tab bar to
 -- draw over, so the bar takes space from the split rather than covering it.
 local bar_win = nil
+-- Likewise in split placement, an empty window kept for the current tab's notes pane
+-- (lua/floatterm/notes draws over it).
+local notes_win = nil
 local hint_win = nil
 local hint_buf = nil
 local hints_shown = settings.get "hints"
@@ -135,6 +140,9 @@ local EDGE_GAP = 1
 -- A move that would leave the terminal smaller than this does nothing.
 local MIN_ROWS = 5
 local MIN_COLS = 20
+-- The notes pane, inside its own border.
+local NOTES_MIN_ROWS = 3
+local NOTES_MIN_COLS = 20
 
 local function fire(pattern, data)
   api.nvim_exec_autocmds("User", { pattern = pattern, data = data or {} })
@@ -216,11 +224,47 @@ end
 -- Boxes for a placement (current by default), border included: outer is the whole
 -- float, terminal the terminal window, tabbar the tab bar's share (nil when off).
 -- Rows are editor rows, below the tab line.
+-- Takes the notes pane's share from the terminal's box, on the notes_side setting, when
+-- the tab has notes on and both still fit. Not in the box placement, which is too small
+-- (lua/floatterm/notes shows notes over it instead). notes_hidden says notes are on but
+-- didn't fit.
+local function carve_notes(parts, record, p)
+  if not (record and record.notes_on) then
+    return parts
+  end
+  local box_mode = p.mode == "float" and not p.full and not p.split.on
+  local side = settings.get "notes_side"
+  local share = settings.get "notes_share"
+  local t = parts.terminal
+  if not box_mode and (side == "left" or side == "right") then
+    local width = math.floor(t.width * share)
+    if width - 2 >= NOTES_MIN_COLS and t.width - width - 2 >= MIN_COLS then
+      parts.notes = { row = t.row, height = t.height, width = width, col = side == "left" and t.col or t.col + t.width - width }
+      parts.terminal = { row = t.row, height = t.height, width = t.width - width, col = side == "left" and t.col + width or t.col }
+    end
+  elseif not box_mode then
+    local height = math.floor(t.height * share)
+    if height - 2 >= NOTES_MIN_ROWS and t.height - height - 2 >= MIN_ROWS then
+      parts.notes = { col = t.col, width = t.width, height = height, row = side == "top" and t.row or t.row + t.height - height }
+      parts.terminal = { col = t.col, width = t.width, height = t.height - height, row = side == "top" and t.row + height or t.row }
+    end
+  end
+  parts.notes_hidden = parts.notes == nil
+  return parts
+end
+
 local function boxes(p)
+  p = p or placement
   local rows, cols, top = editor_area()
-  local outer = geometry(p or placement, rows, cols)
-  local parts = split(outer)
-  return { outer = shifted(outer, top), terminal = shifted(parts.terminal, top), tabbar = shifted(parts.tabbar, top) }
+  local outer = geometry(p, rows, cols)
+  local parts = carve_notes(split(outer), tabs[current], p)
+  return {
+    outer = shifted(outer, top),
+    terminal = shifted(parts.terminal, top),
+    tabbar = shifted(parts.tabbar, top),
+    notes = shifted(parts.notes, top),
+    notes_hidden = parts.notes_hidden,
+  }
 end
 
 -- Where the hints line goes: the row above the float, the row below it, or (with
@@ -267,10 +311,70 @@ local function split_boxes()
   end
   local terminal = box_of(win)
   local tabbar = bar_win and api.nvim_win_is_valid(bar_win) and box_of(bar_win) or nil
-  return { outer = terminal, terminal = terminal, tabbar = tabbar }
+  local notes = notes_win and api.nvim_win_is_valid(notes_win) and box_of(notes_win) or nil
+  local record = tabs[current]
+  return {
+    outer = terminal,
+    terminal = terminal,
+    tabbar = tabbar,
+    notes = notes,
+    notes_hidden = record and record.notes_on and notes == nil or nil,
+  }
+end
+
+local function close_notes_window()
+  if notes_win and api.nvim_win_is_valid(notes_win) then
+    pcall(api.nvim_win_close, notes_win, true)
+  end
+  notes_win = nil
+end
+
+-- In split placement the notes pane needs real room beside the terminal, so it gets a
+-- window of its own split off the terminal's, and the code keeps its size. Opened or
+-- closed to match the current tab; `reopen` rebuilds it after a move or resize.
+local function sync_split_notes(reopen)
+  local record = tabs[current]
+  if reopen or not (record and record.notes_on) then
+    close_notes_window()
+  end
+  if not (record and record.notes_on) or (notes_win and api.nvim_win_is_valid(notes_win)) then
+    return
+  end
+  local side = settings.get "notes_side"
+  local vertical = side == "left" or side == "right"
+  local total = vertical and api.nvim_win_get_width(win) or api.nvim_win_get_height(win)
+  local size = math.floor(total * settings.get "notes_share")
+  local fits = vertical and (size - 2 >= NOTES_MIN_COLS and total - size >= MIN_COLS)
+    or (not vertical and size - 2 >= NOTES_MIN_ROWS and total - size >= MIN_ROWS)
+  if not fits then
+    return
+  end
+  local scratch = api.nvim_create_buf(false, true)
+  vim.bo[scratch].bufhidden = "wipe"
+  local config = { split = ({ left = "left", right = "right", top = "above", bottom = "below" })[side], win = win }
+  if vertical then
+    config.width = size
+  else
+    config.height = size
+  end
+  notes_win = api.nvim_open_win(scratch, false, config)
+  for option, value in pairs {
+    winfixwidth = true,
+    winfixheight = true,
+    number = false,
+    relativenumber = false,
+    signcolumn = "no",
+    foldcolumn = "0",
+    cursorline = false,
+    statuscolumn = "",
+    winbar = "",
+  } do
+    vim.wo[notes_win][option] = value
+  end
 end
 
 local function close_split_windows()
+  close_notes_window()
   if bar_win and api.nvim_win_is_valid(bar_win) then
     pcall(api.nvim_win_close, bar_win, true)
   end
@@ -297,8 +401,10 @@ end
 -- With the tab bar showing, the border only names the current tab; without it, the
 -- border lists every tab.
 local function title(layout)
+  -- Notes are on for this tab but there's no room for them here.
+  local hidden = layout.notes_hidden and "· notes hidden " or ""
   if layout.tabbar then
-    return " " .. M.name(tabs[current]) .. " "
+    return " " .. M.name(tabs[current]) .. " " .. hidden
   end
 
   local names = {}
@@ -306,7 +412,7 @@ local function title(layout)
     local name = record.label and (i .. " " .. record.label) or tostring(i)
     names[i] = i == current and ("[" .. name .. "]") or name
   end
-  return " " .. table.concat(names, " │ ") .. " "
+  return " " .. table.concat(names, " │ ") .. " " .. hidden
 end
 
 local function float_config()
@@ -384,6 +490,7 @@ local function relayout()
       else
         api.nvim_win_set_width(win, math.max(MIN_COLS, size))
       end
+      sync_split_notes(true)
     end
   elseif win_is_open() then
     api.nvim_win_set_config(win, float_config())
@@ -468,6 +575,7 @@ local function show_current()
       api.nvim_win_set_buf(win, buf)
     end
     -- Without the bar there's no border title, so the tabs go in the winbar.
+    sync_split_notes()
     vim.wo[win].winbar = bar_win and "" or title({}):gsub("%%", "%%%%")
     api.nvim_set_current_win(win)
     vim.cmd "startinsert"
@@ -540,13 +648,16 @@ local function yank_unwrapped()
   api.nvim_feedkeys(api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
 end
 
-local function map_tab_keys(buf)
+local function map_tab_keys(buf, modes)
+  modes = modes or { "n", "t" }
   local function map(lhs, rhs, desc)
-    vim.keymap.set({ "n", "t" }, lhs, rhs, { buffer = buf, desc = desc })
+    vim.keymap.set(modes, lhs, rhs, { buffer = buf, desc = desc })
   end
 
   map("<C-t>", M.new_tab, "terminal new tab")
-  vim.keymap.set("x", "y", yank_unwrapped, { buffer = buf, desc = "terminal copy without the wrap breaks" })
+  if vim.tbl_contains(modes, "t") then
+    vim.keymap.set("x", "y", yank_unwrapped, { buffer = buf, desc = "terminal copy without the wrap breaks" })
+  end
   -- Ctrl+Shift+Space, as macOS keeps Ctrl+Space for switching input sources. Plain
   -- Ctrl+Space (<C-Space>, or NUL as <C-@> in some terminal apps) works too where it
   -- gets through.
@@ -578,6 +689,32 @@ local function map_tab_keys(buf)
   for _, key in ipairs(extra_keys) do
     map(key[1], key[2], key[3])
   end
+end
+
+-- The terminal's own keys (move, full-screen, tabs…) on another buffer, in `modes`
+-- (normal only, say, for the notes pane), so they work wherever the cursor is.
+function M.map_keys(buf, modes)
+  map_tab_keys(buf, modes)
+end
+
+-- The text the terminal copies with y (wrapped lines joined), for the current visual
+-- selection in a terminal buffer, without touching any register. For notes.
+function M.unwrapped_selection()
+  local mode = vim.fn.mode()
+  local from, to = vim.fn.getpos "v", vim.fn.getpos "."
+  local pieces = vim.fn.getregion(from, to, { type = mode })
+  local first = math.min(from[2], to[2])
+  local edge = api.nvim_win_get_width(0) - 2
+  local text = pieces[1] or ""
+  for i = 2, #pieces do
+    local previous = api.nvim_buf_get_lines(0, first + i - 3, first + i - 2, false)[1] or ""
+    if vim.fn.strdisplaywidth(previous) >= edge then
+      text = text .. pieces[i]:gsub("^%s+", "")
+    else
+      text = text .. "\n" .. pieces[i]
+    end
+  end
+  return text
 end
 
 -- Adds a key to every tab, now and later, in normal and terminal mode.
@@ -693,7 +830,9 @@ function M.update(buf, fields)
     return
   end
 
-  if vim.tbl_contains(changed, "label") and win_is_open() then
+  if vim.tbl_contains(changed, "notes_on") and record == tabs[current] then
+    relayout()
+  elseif vim.tbl_contains(changed, "label") and win_is_open() then
     api.nvim_win_set_config(win, { title = title(boxes()), title_pos = "center" })
   end
   fire("FloatTermTabChanged", { buf = buf, id = record.id, fields = changed })
@@ -737,6 +876,8 @@ end
 function M.layout()
   local layout = (placement.split.on and is_split_window(win)) and split_boxes() or boxes()
   layout.split = placement.split.on
+  -- In split placement, the window held for the notes pane (nil otherwise).
+  layout.notes_window = placement.split.on and notes_win and api.nvim_win_is_valid(notes_win) and notes_win or nil
   layout.open = win_is_open()
   layout.full = placement.full
   return layout
@@ -946,9 +1087,10 @@ function M.toggle()
       return
     end
     vim.cmd "wincmd p"
-    if api.nvim_get_current_win() == win or api.nvim_get_current_win() == bar_win then
+    local here = api.nvim_get_current_win()
+    if here == win or here == bar_win or here == notes_win then
       for _, w in ipairs(api.nvim_tabpage_list_wins(0)) do
-        if w ~= win and w ~= bar_win and is_split_window(w) then
+        if w ~= win and w ~= bar_win and w ~= notes_win and is_split_window(w) then
           api.nvim_set_current_win(w)
           break
         end
@@ -996,6 +1138,9 @@ api.nvim_create_autocmd("WinClosed", {
     local closed = tonumber(args.match)
     if bar_win and closed == bar_win then
       bar_win = nil
+    end
+    if notes_win and closed == notes_win then
+      notes_win = nil
     end
     if win and closed == win then
       close_hints()

@@ -21,6 +21,10 @@ M.defaults = {
   reopen_tabs = true,
   -- The Claude sessions bookmark in the top right of the editor.
   bookmark = true,
+  -- Where a tab's notes pane sits beside its terminal ("left", "right", "top",
+  -- "bottom"), and the share of the terminal's room it takes.
+  notes_side = "right",
+  notes_share = 0.35,
 }
 
 local values = nil
