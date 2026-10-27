@@ -211,6 +211,7 @@ local function apply(record, event, pid)
   elseif name == "Stop" then
     claude.status = "done"
     floatterm.update(record.buf, claude)
+    pcall(function() require("floatterm.claude_notes").on_stop(record) end)
   elseif name == "SessionEnd" then
     to_shell(record, event.reason == "clear")
     return

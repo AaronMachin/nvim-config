@@ -192,6 +192,10 @@ local function vertical_tab(record, level)
       table.insert(lines, { { command, hl } })
     end
   end
+  -- Notes on (lua/floatterm/notes), after the state or folder.
+  if record.notes_on then
+    table.insert(lines[1], { " ✎", nil })
+  end
   return lines
 end
 
@@ -259,6 +263,9 @@ local function horizontal_tab(record, level, cap)
       table.insert(chunks, { " · ", "FloatTermWorking" })
     end
     table.insert(chunks, part)
+  end
+  if record.notes_on then
+    table.insert(chunks, 2, { " ✎", nil })
   end
   return chunks
 end

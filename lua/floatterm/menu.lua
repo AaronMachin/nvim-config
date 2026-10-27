@@ -11,6 +11,10 @@ local function floatterm()
   return require "floatterm"
 end
 
+local function notes()
+  return require "floatterm.notes"
+end
+
 local function go_to_tab(n)
   return function()
     local record = floatterm().tabs()[n]
@@ -42,6 +46,9 @@ M.columns = {
     },
     { "s", "settings", { s = function() require("floatterm.config_page").open() end }, "Ctrl+Shift+," },
     { "q", "hide or show", { q = function() floatterm().toggle() end }, "Ctrl+\\" },
+    { "e", "notes on / off", { e = function() notes().toggle_notes() end } },
+    { "i", "into notes ↔ terminal", { i = function() notes().toggle_focus() end }, "Ctrl+Shift+e" },
+    { "a", "add a note", { a = function() notes().add_note() end } },
   },
   {
     { "t", "new tab", { t = function() floatterm().new_tab() end }, "Ctrl+t" },
@@ -70,6 +77,9 @@ M.columns = {
         return keys
       end)(),
     },
+    { "y", "selection to notes", { y = function() notes().capture() end }, "Y in a tab" },
+    { "o", "earlier notes", { o = function() notes().pick() end } },
+    { "r", "refresh Claude's notes", { r = function() require("floatterm.claude_notes").refresh() end } },
   },
 }
 
