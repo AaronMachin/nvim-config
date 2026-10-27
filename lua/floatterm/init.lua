@@ -584,9 +584,16 @@ function M.new_tab(argv, opts)
     session_id = opts.session_id,
   }
   next_id = next_id + 1
-  table.insert(tabs, record)
-  if show or current == 0 then
-    current = #tabs
+  if show and current > 0 then
+    -- Beside the tab you're on. Tabs opened without showing (restore) go at the end, so
+    -- they keep their saved order.
+    table.insert(tabs, current + 1, record)
+    current = current + 1
+  else
+    table.insert(tabs, record)
+    if show or current == 0 then
+      current = #tabs
+    end
   end
 
   if show then
