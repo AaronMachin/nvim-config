@@ -693,7 +693,7 @@ function M.restore()
       table.insert(items, {
         set = set,
         text = "Open the same tabs as the nvim already open here" .. which
-          .. " (its Claude tabs resume the same conversations, so both nvims' Claude tabs may clash: replies can interleave and either can lose its place)",
+          .. " (its Claude tabs resume the same conversations and share the same notes, so the two nvims' Claude tabs may clash: replies can interleave and either can lose its place)",
       })
     end
     table.insert(items, { text = "Start fresh" })

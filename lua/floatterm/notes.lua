@@ -816,6 +816,18 @@ end
 -- pane rather than the terminal.
 set_up_buffer = function(buf, editable)
   floatterm().map_keys(buf, { "n" })
+  if editable then
+    -- Another nvim with the same tabs shares this file: pick up what it saved when
+    -- coming back to nvim or into the notes, rather than saving over it from an old
+    -- copy. Unsaved edits here aren't thrown away (nvim asks instead).
+    vim.bo[buf].autoread = true
+    api.nvim_create_autocmd({ "FocusGained", "BufEnter", "WinEnter" }, {
+      buffer = buf,
+      callback = function()
+        vim.cmd "silent! checktime"
+      end,
+    })
+  end
   local modes = editable and { "n", "i" } or { "n" }
   local function map(mode, lhs, rhs, desc)
     vim.keymap.set(mode, lhs, rhs, { buffer = buf, desc = desc })
@@ -1273,7 +1285,11 @@ local function to_fresh_line()
   local buf = api.nvim_win_get_buf(win)
   local count = api.nvim_buf_line_count(buf)
   if api.nvim_buf_get_lines(buf, count - 1, count, false)[1] ~= "" then
+    -- Not an edit: an empty line to type on doesn't stop another nvim's saved
+    -- changes being picked up (autoread skips a modified buffer and asks instead).
+    local modified = vim.bo[buf].modified
     api.nvim_buf_set_lines(buf, count, count, false, { "" })
+    vim.bo[buf].modified = modified
     count = count + 1
   end
   api.nvim_win_set_cursor(win, { count, 0 })
