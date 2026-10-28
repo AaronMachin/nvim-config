@@ -4,6 +4,8 @@ My Neovim config, built on the [NvChad starter](https://github.com/NvChad/starte
 
 To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvim installs the plugins at the versions in `lazy-lock.json`.
 
+`make test` runs the test suite (about 10 seconds, kept apart from your real nvim data; see `tests/README.md`). `make test FILE=tests/notes_spec.lua` runs one file.
+
 ## What's added
 
 - A floating terminal with tabs and rounded corners, leaving 10% of the screen open at the top and a small gap at the sides and bottom (`lua/floatterm`)

@@ -1,0 +1,9 @@
+[
+  {"method": "GET|HEAD", "uri": "users", "name": "users.index", "action": "App\\Http\\Controllers\\UserController@index"},
+  {"method": "POST", "uri": "users", "name": "users.store", "action": "App\\Http\\Controllers\\UserController@store"},
+  {"method": "GET|HEAD", "uri": "users/{user}", "name": null, "action": "App\\Http\\Controllers\\UserController@show"},
+  {"method": "GET|HEAD", "uri": "up", "name": null, "action": "App\\Http\\Controllers\\HealthController"},
+  {"method": "GET|HEAD", "uri": "ping", "name": null, "action": "Acme\\Pkg\\PingController@ping"},
+  {"method": "GET|HEAD", "uri": "/", "name": null, "action": "Closure"},
+  {"method": "GET|HEAD", "uri": "gone", "name": null, "action": "App\\Http\\Controllers\\MissingController@index"}
+]
