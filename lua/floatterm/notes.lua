@@ -250,6 +250,8 @@ local function place(key, buf, config, winhighlight)
   local win = pane[key]
   if win and api.nvim_win_is_valid(win) then
     if api.nvim_win_get_buf(win) ~= buf then
+      -- Our own swap (another tab's notes); winfixbuf goes back on below.
+      vim.wo[win].winfixbuf = false
       api.nvim_win_set_buf(win, buf)
     end
     api.nvim_win_set_config(win, config)
@@ -271,6 +273,8 @@ local function place(key, buf, config, winhighlight)
     spell = false,
     list = false,
     winhighlight = winhighlight or "",
+    -- A jump (Ctrl+o) or :e can't load another file into the pane.
+    winfixbuf = true,
   } do
     vim.wo[win][option] = value
   end
@@ -552,7 +556,15 @@ end
 -- Ctrl+Shift+o in your notes: all of Claude's notes for the tab in a large float, to
 -- scroll, select and copy from (y copies to the system clipboard). q or Esc goes back
 -- to where you were in yours, typing if you were.
+local reading = nil
+
 function M.read_claude()
+  -- The same key closes it, so pressing it again never stacks a second one.
+  if reading and api.nvim_win_is_valid(reading) then
+    api.nvim_win_close(reading, true)
+    reading = nil
+    return
+  end
   local from_win, from_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
   -- Your notes' file is <note_id>.md.
   local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
@@ -592,7 +604,10 @@ function M.read_claude()
     zindex = 100,
   }
   local win = api.nvim_open_win(buf, true, config)
-  for option, value in pairs { wrap = true, linebreak = true, cursorline = true } do
+  reading = win
+  -- winfixbuf: a jump (Ctrl+o, which some terminals send for Ctrl+Shift+o) or :e would
+  -- otherwise load another file into it and take the close keys with Claude's notes.
+  for option, value in pairs { wrap = true, linebreak = true, cursorline = true, winfixbuf = true } do
     vim.wo[win][option] = value
   end
   -- As tall as the notes need, up to most of the editor.
@@ -620,6 +635,8 @@ function M.read_claude()
   end
   map("n", "q", back)
   map("n", "<Esc>", back)
+  map("n", "<C-S-o>", back)
+  map("n", "<C-o>", back)
   map({ "n", "x" }, "y", '"+y')
   -- Leaving it some other way (a click elsewhere) closes it there.
   api.nvim_create_autocmd("WinLeave", {
