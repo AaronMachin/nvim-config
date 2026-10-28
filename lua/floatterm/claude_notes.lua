@@ -5,9 +5,9 @@
 -- When the tab's Claude finishes a turn (the Stop hook, through lua/floatterm/claude)
 -- and the tab has notes on, the turn is read from Claude Code's transcript (from the
 -- last prompt to the end: the prompt, Claude's replies, and the tools it ran with a
--- short result) and given to `claude -p` with the current sheet, which it rewrites:
--- Now, Links, Branch & commits, Ran, Decisions (most urgent first, as the pane may only
--- have room for the top). Anything that looks like a secret
+-- short result) and given to `claude -p` with the current sheet, which it rewrites in
+-- the user's shape: a summary with hashtags, a status bar with the tasks, PRs, key
+-- links, details. Anything that looks like a secret
 -- (tokens, keys, passwords) is replaced with [redacted] before it's sent. The sheet is
 -- written beside the user's own notes (floatterm.notes.paths) and
 -- FloatTermClaudeNotesChanged is fired with the note_id so the pane can reload it.
@@ -43,18 +43,140 @@ local SETTLE_MS = 1000
 local TIMEOUT_MS = 120000
 
 local INSTRUCTIONS = [[
-You keep a short notes sheet for a developer about a Claude Code session running in one of their terminal tabs. You are given the current sheet and the latest turn of the session: the user's prompt, Claude's replies, and the tools Claude ran with short results.
+You keep a short notes sheet for a developer about a Claude Code session running in one of their terminal tabs. You are given the current sheet and the latest turn of the session: the user's prompt, Claude's replies, and the tools Claude ran with short results. Reply with the updated sheet as data in the given schema:
 
-Rewrite the sheet so it is useful to glance at later. Output only the sheet as markdown: no preamble, no code fence.
+- summary: one or two short lines on what this session is about and where it is. Simple, key words.
+- hashtags: up to 10 one-word categories for the session (no # needed), e.g. auth, cognito, deploy.
+- percent: how far through its plan the session is, 0-100.
+- tasks: the session's plan as tasks, in order, each with a short name and a state (done, in_progress, pending, blocked), and for in_progress or blocked a few words on what it is doing or what blocks it. Keep the tasks and their names stable between turns unless the work changed.
+- prs: every pull request mentioned, with its full URL and a few words.
+- links: other links worth reopening (Jira, docs, dashboards, deploys), with full URLs and a few words.
+- details: anything else worth keeping, as terse lines: decisions and why, branch and commits, what's waiting on whom.
 
-Use these sections, in this order, each a "## " heading with terse bullets. Leave out any section with nothing in it. The sheet is often cut off at the bottom, so the most urgent comes first.
-## Now - where things stand, and what Claude is waiting on, if anything. Rewrite this section from the latest turn every time; never keep an earlier Now line beside a newer one
-## Links - PR, Jira and other URLs worth reopening, a few words on each
-## Branch & commits - the branch, and commits made (short hash and subject)
-## Ran - commands worth remembering and whether they passed or failed; for a command run several times, only its latest result
-## Decisions - what was decided and why, a line each
+Keep what is still true from the current sheet, update what this turn changed, and drop what is stale or routine. Never invent a link or a task that isn't in the input. Keep details to about 10 lines. UK English.]]
 
-Keep what is still useful from the current sheet, update what this turn changed, and drop what is stale or routine (file reads, searches, small steps). Never add anything that isn't in the input. Keep it under 40 lines. UK English.]]
+-- The shape Claude has to reply in (claude -p --json-schema), so the sheet's layout is
+-- drawn here and can't drift: the bar, the task tree and the links are always right.
+local SCHEMA = {
+  type = "object",
+  properties = {
+    summary = { type = "string" },
+    hashtags = { type = "array", items = { type = "string" }, maxItems = 10 },
+    percent = { type = "integer", minimum = 0, maximum = 100 },
+    tasks = {
+      type = "array",
+      items = {
+        type = "object",
+        properties = {
+          name = { type = "string" },
+          state = { type = "string", enum = { "done", "in_progress", "pending", "blocked" } },
+          detail = { type = "string" },
+        },
+        required = { "name", "state" },
+      },
+    },
+    prs = {
+      type = "array",
+      items = {
+        type = "object",
+        properties = { url = { type = "string", pattern = "^https?://" }, title = { type = "string" } },
+        required = { "url", "title" },
+      },
+    },
+    links = {
+      type = "array",
+      items = {
+        type = "object",
+        properties = { url = { type = "string", pattern = "^https?://" }, title = { type = "string" } },
+        required = { "url", "title" },
+      },
+    },
+    details = { type = "array", items = { type = "string" } },
+  },
+  required = { "summary", "hashtags", "percent", "tasks", "prs", "links", "details" },
+}
+
+local STATES = {
+  done = { "🟢", "DONE" },
+  in_progress = { "🔵", "IN PROGRESS" },
+  pending = { "⚪", "PENDING" },
+  blocked = { "🔴", "BLOCKED" },
+}
+local BAR_WIDTH = 42
+
+local function text(value)
+  return type(value) == "string" and vim.trim(value) or ""
+end
+
+-- The sheet in the user's shape, from Claude's structured reply.
+function M.render(data)
+  local lines = { "# Summary of chat", text(data.summary) }
+  local tags = {}
+  for _, tag in ipairs(type(data.hashtags) == "table" and data.hashtags or {}) do
+    tag = text(tag):gsub("^#+", ""):gsub("%s+", "-")
+    if tag ~= "" and #tags < 10 then
+      table.insert(tags, "#" .. tag)
+    end
+  end
+  if #tags > 0 then
+    table.insert(lines, table.concat(tags, " "))
+  end
+
+  local tasks = vim.tbl_filter(function(task)
+    return type(task) == "table" and text(task.name) ~= ""
+  end, type(data.tasks) == "table" and data.tasks or {})
+  if #tasks > 0 then
+    local percent = math.max(0, math.min(100, math.floor((tonumber(data.percent) or 0) + 0.5)))
+    local filled = math.floor(BAR_WIDTH * percent / 100 + 0.5)
+    vim.list_extend(lines, {
+      "",
+      "# Status",
+      ("[%s%s] %d%%"):format(string.rep("█", filled), string.rep("░", BAR_WIDTH - filled), percent),
+    })
+    local widest = 0
+    for _, task in ipairs(tasks) do
+      widest = math.max(widest, vim.fn.strdisplaywidth(text(task.name)))
+    end
+    for i, task in ipairs(tasks) do
+      local state = STATES[task.state] or STATES.pending
+      local name = text(task.name)
+      local dots = string.rep(".", widest - vim.fn.strdisplaywidth(name) + 6)
+      local detail = text(task.detail)
+      local after = (task.state == "in_progress" or task.state == "blocked") and detail ~= "" and (" (" .. detail .. ")") or ""
+      table.insert(lines, ("  %s %s %s %s %s%s"):format(i == #tasks and "└─" or "├─", state[1], name, dots, state[2], after))
+    end
+  end
+
+  -- Only entries with a real URL: a link without one isn't worth showing.
+  local function link_section(heading, entries)
+    local items = {}
+    for _, entry in ipairs(type(entries) == "table" and entries or {}) do
+      local url = type(entry) == "table" and text(entry.url) or ""
+      if url:match "^https?://" then
+        local title = text(entry.title)
+        table.insert(items, "- " .. (title ~= "" and (title .. ": ") or "") .. url)
+      end
+    end
+    if #items > 0 then
+      vim.list_extend(lines, { "", heading })
+      vim.list_extend(lines, items)
+    end
+  end
+  link_section("# PRs", data.prs)
+  link_section("# Key links", data.links)
+
+  local details = {}
+  for _, line in ipairs(type(data.details) == "table" and data.details or {}) do
+    if text(line) ~= "" then
+      table.insert(details, "- " .. text(line):gsub("^[-*]%s*", ""))
+    end
+  end
+  if #details > 0 then
+    vim.list_extend(lines, { "", "# Details" })
+    vim.list_extend(lines, details)
+  end
+  return table.concat(lines, "\n")
+end
 
 -- Per tab id: { running, again, warned }.
 local state = {}
@@ -507,7 +629,9 @@ function run(record)
       return finished(id)
     end
     M.last = { cost_usd = out.total_cost_usd, duration_ms = out.duration_ms }
-    local sheet = sheet_from(out.result)
+    -- The structured reply, drawn in the user's shape; the plain text only if a reply
+    -- somehow came back without it.
+    local sheet = type(out.structured_output) == "table" and M.render(out.structured_output) or sheet_from(out.result)
     -- The path again, from the note the run started with, not whatever the tab has now.
     local path = M.path { note_id = note_id }
     if sheet ~= "" and path and may_write(id, note_id) then
@@ -543,6 +667,8 @@ function run(record)
       "--no-session-persistence",
       "--output-format",
       "json",
+      "--json-schema",
+      vim.json.encode(SCHEMA),
     }
     local opts = {
       cwd = record.cwd or vim.uv.cwd(),

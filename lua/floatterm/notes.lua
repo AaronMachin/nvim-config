@@ -360,6 +360,13 @@ local function draw(record, box, overlay)
     config.height = math.max(1, math.min(room, total))
     config.title = claude_title(total - config.height, width, refreshed_at(paths.claude))
     api.nvim_win_set_config(pane.claude, config)
+    -- Always from the top, where the summary is, unless you're in it reading.
+    if api.nvim_get_current_win() ~= pane.claude then
+      pcall(api.nvim_win_set_cursor, pane.claude, { 1, 0 })
+      api.nvim_win_call(pane.claude, function()
+        vim.fn.winrestview { topline = 1 }
+      end)
+    end
     top, height = box.row + config.height + 2, box.height - config.height - 2
   elseif pane.claude and api.nvim_win_is_valid(pane.claude) then
     close_win(pane.claude)
