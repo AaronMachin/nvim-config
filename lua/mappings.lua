@@ -83,6 +83,22 @@ map("n", "<leader>ay", "<cmd>ClaudeCodeDiffAccept<CR>", { desc = "claude accept 
 map("n", "<leader>an", "<cmd>ClaudeCodeDiffDeny<CR>", { desc = "claude reject diff" })
 map("n", "<leader>gm", agent "commit_message", { desc = "git commit message from Claude" })
 
+-- Names for the leader groups, so the which-key panel reads "a → claude" rather than
+-- a bare letter. <leader>o (terminal) is named in lua/floatterm/menu.
+pcall(function()
+  require("which-key").add {
+    { "<leader>a", group = "claude" },
+    { "<leader>d", group = "debug" },
+    { "<leader>f", group = "find" },
+    { "<leader>g", group = "git" },
+    { "<leader>l", group = "laravel" },
+    { "<leader>p", group = "pins and phpstan" },
+    { "<leader>s", group = "database" },
+    { "<leader>t", group = "terminal and tests" },
+    { "<leader>w", group = "worktrees" },
+  }
+end)
+
 -- the floating terminal's tab bar, Claude bookmark and settings page
 require("floatterm.tabbar").setup()
 require("floatterm.bookmark").setup()
