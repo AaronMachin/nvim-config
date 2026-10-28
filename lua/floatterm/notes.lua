@@ -289,17 +289,36 @@ local function display_lines(buf, width)
   return count
 end
 
--- Claude's part's title: with how many lines don't fit and the key that shows them
--- all, shortened when the part is narrow.
-local function claude_title(hidden, width)
+-- When Claude's notes file was last rewritten: "14:32" today, "28 Oct" before, nil
+-- when there isn't one yet.
+local function refreshed_at(path)
+  local stat = path and vim.uv.fs_stat(path)
+  if not stat then
+    return nil
+  end
+  local when = stat.mtime.sec
+  return os.date(os.date("%Y%m%d", when) == os.date "%Y%m%d" and "%H:%M" or "%d %b", when)
+end
+
+-- Claude's part's title: when it was last refreshed, how many lines don't fit and the
+-- key that shows them all, dropping parts when the part is narrow (the hidden lines
+-- and their key matter most).
+local function claude_title(hidden, width, refreshed)
+  local when = refreshed and (" · refreshed " .. refreshed) or ""
+  local candidates = {}
   if hidden > 0 then
-    for _, title in ipairs {
-      (" ✳ Claude · %d more %s · Ctrl+Shift+o "):format(hidden, hidden == 1 and "line" or "lines"),
+    local lines = hidden == 1 and "line" or "lines"
+    vim.list_extend(candidates, {
+      (" ✳ Claude%s · %d more %s · Ctrl+Shift+o "):format(when, hidden, lines),
+      (" ✳ Claude%s · %d more · C-S-o "):format(when, hidden),
       (" ✳ Claude · %d more · C-S-o "):format(hidden),
-    } do
-      if vim.fn.strdisplaywidth(title) <= width then
-        return title
-      end
+    })
+  else
+    table.insert(candidates, (" ✳ Claude%s "):format(when))
+  end
+  for _, title in ipairs(candidates) do
+    if vim.fn.strdisplaywidth(title) <= width then
+      return title
     end
   end
   return " ✳ Claude "
@@ -339,7 +358,7 @@ local function draw(record, box, overlay)
     -- the estimate.
     local total = api.nvim_win_text_height(pane.claude, {}).all
     config.height = math.max(1, math.min(room, total))
-    config.title = claude_title(total - config.height, width)
+    config.title = claude_title(total - config.height, width, refreshed_at(paths.claude))
     api.nvim_win_set_config(pane.claude, config)
     top, height = box.row + config.height + 2, box.height - config.height - 2
   elseif pane.claude and api.nvim_win_is_valid(pane.claude) then
@@ -596,7 +615,10 @@ function M.read_claude()
     height = most,
     style = "minimal",
     border = "rounded",
-    title = record and (" ✳ Claude · " .. floatterm().name(record) .. " ") or " ✳ Claude ",
+    title = (" ✳ Claude%s%s "):format(
+      record and (" · " .. floatterm().name(record)) or "",
+      refreshed_at(paths_for(note_id).claude) and (" · refreshed " .. refreshed_at(paths_for(note_id).claude)) or ""
+    ),
     title_pos = "center",
     footer = " q or Esc closes · y copies ",
     footer_pos = "center",
