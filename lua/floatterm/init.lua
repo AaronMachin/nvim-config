@@ -499,10 +499,14 @@ local function relayout()
   fire("FloatTermLayoutChanged", { open = win_is_open() })
 end
 
+-- NvChad's terminal window options, then relative line numbers, so in Ctrl+x mode
+-- output can be jumped through and copied by count (12k, 8yj).
 local function apply_winopts(w)
   for option, value in pairs(require("nvconfig").term.winopts) do
     vim.wo[w][option] = value
   end
+  vim.wo[w].number = true
+  vim.wo[w].relativenumber = true
 end
 
 -- Opens the terminal as a real split at split.edge, from a normal window, with an
@@ -594,9 +598,7 @@ local function show_current()
     api.nvim_win_set_config(win, float_config())
   else
     win = api.nvim_open_win(buf, true, float_config())
-    for option, value in pairs(require("nvconfig").term.winopts) do
-      vim.wo[win][option] = value
-    end
+    apply_winopts(win)
   end
 
   show_hints()
@@ -628,7 +630,8 @@ local function yank_unwrapped()
   local from, to = vim.fn.getpos "v", vim.fn.getpos "."
   local pieces = vim.fn.getregion(from, to, { type = mode })
   local first = math.min(from[2], to[2])
-  local edge = api.nvim_win_get_width(0) - 2
+  -- The text area's width (the window less its number column), less Claude's margin.
+  local edge = api.nvim_win_get_width(0) - vim.fn.getwininfo(api.nvim_get_current_win())[1].textoff - 2
 
   local text = pieces[1] or ""
   for i = 2, #pieces do
@@ -704,7 +707,8 @@ function M.unwrapped_selection()
   local from, to = vim.fn.getpos "v", vim.fn.getpos "."
   local pieces = vim.fn.getregion(from, to, { type = mode })
   local first = math.min(from[2], to[2])
-  local edge = api.nvim_win_get_width(0) - 2
+  -- The text area's width (the window less its number column), less Claude's margin.
+  local edge = api.nvim_win_get_width(0) - vim.fn.getwininfo(api.nvim_get_current_win())[1].textoff - 2
   local text = pieces[1] or ""
   for i = 2, #pieces do
     local previous = api.nvim_buf_get_lines(0, first + i - 3, first + i - 2, false)[1] or ""
