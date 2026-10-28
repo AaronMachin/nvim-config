@@ -8,9 +8,12 @@
 -- short result) and given to `claude -p` with the current sheet, which it rewrites in
 -- the user's shape: a summary with hashtags, a status bar with the tasks, PRs, key
 -- links, details. Anything that looks like a secret
--- (tokens, keys, passwords) is replaced with [redacted] before it's sent. The sheet is
--- written beside the user's own notes (floatterm.notes.paths) and
--- FloatTermClaudeNotesChanged is fired with the note_id so the pane can reload it.
+-- (tokens, keys, passwords) is replaced with [redacted] before it's sent. Claude's
+-- structured reply is written beside the user's own notes (floatterm.notes.paths) as
+-- <note_id>.claude.json, which the pane draws at its own width, and the sheet as
+-- <note_id>.claude.md at a fixed width, for Claude in the tab to read and as the next
+-- run's current sheet. FloatTermClaudeNotesChanged is then fired with the note_id so the
+-- pane can reload it. The percentage is worked out from the tasks, not asked for.
 --
 -- Two tabs can share a note. Only the first of them (in tab order) with notes on keeps
 -- Claude's half up to date, so they don't overwrite each other.
@@ -47,7 +50,6 @@ You keep a short notes sheet for a developer about a Claude Code session running
 
 - summary: one or two short lines on what this session is about and where it is. Simple, key words.
 - hashtags: up to 10 one-word categories for the session (no # needed), e.g. auth, cognito, deploy.
-- percent: how far through its plan the session is, 0-100.
 - tasks: the session's plan as tasks, in order, each with a short name and a state (done, in_progress, pending, blocked), and for in_progress or blocked a few words on what it is doing or what blocks it. Keep the tasks and their names stable between turns unless the work changed.
 - prs: every pull request mentioned, with its full URL and a few words.
 - links: other links worth reopening (Jira, docs, dashboards, deploys), with full URLs and a few words.
@@ -62,7 +64,6 @@ local SCHEMA = {
   properties = {
     summary = { type = "string" },
     hashtags = { type = "array", items = { type = "string" }, maxItems = 10 },
-    percent = { type = "integer", minimum = 0, maximum = 100 },
     tasks = {
       type = "array",
       items = {
@@ -93,7 +94,7 @@ local SCHEMA = {
     },
     details = { type = "array", items = { type = "string" } },
   },
-  required = { "summary", "hashtags", "percent", "tasks", "prs", "links", "details" },
+  required = { "summary", "hashtags", "tasks", "prs", "links", "details" },
 }
 
 local STATES = {
@@ -102,15 +103,66 @@ local STATES = {
   pending = { "⚪", "PENDING" },
   blocked = { "🔴", "BLOCKED" },
 }
-local BAR_WIDTH = 42
+-- What each task counts for in the percentage: half for one under way.
+local WORTH = { done = 1, in_progress = 0.5 }
+-- The .md is read by Claude in the tab and given to the next run, not drawn in a pane,
+-- so it gets a fixed width.
+local DEFAULT_WIDTH = 42
+local MIN_BAR = 10
+-- More tasks than this and the done ones fold into one line, so the current and next
+-- ones stay in view.
+local FOLD_OVER = 6
+local NEEDS_YOU_HL = "FloatTermNeedsYou"
 
 local function text(value)
   return type(value) == "string" and vim.trim(value) or ""
 end
 
--- The sheet in the user's shape, from Claude's structured reply.
-function M.render(data)
-  local lines = { "# Summary of chat", text(data.summary) }
+local function width_of(s)
+  return vim.fn.strdisplaywidth(s)
+end
+
+-- `s` cut to `width` cells, ending in … when it was cut.
+local function fit(s, width)
+  if width_of(s) <= width then
+    return s
+  end
+  local out = ""
+  for _, char in ipairs(vim.fn.split(s, "\\zs")) do
+    if width_of(out .. char) + 1 > width then
+      break
+    end
+    out = out .. char
+  end
+  return out .. "…"
+end
+
+-- Rounded down, so 100% only once everything is done.
+local function percent_of(tasks)
+  local sum = 0
+  for _, task in ipairs(tasks) do
+    sum = sum + (WORTH[task.state] or 0)
+  end
+  return math.floor(sum * 100 / #tasks)
+end
+
+-- The line shown above the bar while the tab's Claude waits on you.
+function M.needs_you_line(message)
+  message = text(message):gsub("%s+", " ")
+  return "● Needs you" .. (message ~= "" and (": " .. message) or ""), NEEDS_YOU_HL
+end
+
+-- The sheet in the user's shape, from Claude's structured reply, as lines and their
+-- highlights ({ line, col, end_col, group }, 0-based bytes). opts:
+--   width      the text width to fit the bar and task names in (DEFAULT_WIDTH)
+--   needs_you  the notification message (or "") when the tab's Claude is waiting on you
+function M.render(data, opts)
+  opts = opts or {}
+  local width = math.max(1, opts.width or DEFAULT_WIDTH)
+  local lines, highlights = { "# Summary of chat", text(data.summary) }, {}
+  local function highlight(col, end_col, group)
+    table.insert(highlights, { line = #lines - 1, col = col, end_col = end_col, group = group })
+  end
   local tags = {}
   for _, tag in ipairs(type(data.hashtags) == "table" and data.hashtags or {}) do
     tag = text(tag):gsub("^#+", ""):gsub("%s+", "-")
@@ -125,25 +177,65 @@ function M.render(data)
   local tasks = vim.tbl_filter(function(task)
     return type(task) == "table" and text(task.name) ~= ""
   end, type(data.tasks) == "table" and data.tasks or {})
+  if #tasks > 0 or opts.needs_you then
+    vim.list_extend(lines, { "", "# Status" })
+  end
+  if opts.needs_you then
+    local line, group = M.needs_you_line(opts.needs_you)
+    table.insert(lines, line)
+    highlight(0, #line, group)
+  end
   if #tasks > 0 then
-    local percent = math.max(0, math.min(100, math.floor((tonumber(data.percent) or 0) + 0.5)))
-    local filled = math.floor(BAR_WIDTH * percent / 100 + 0.5)
-    vim.list_extend(lines, {
-      "",
-      "# Status",
-      ("[%s%s] %d%%"):format(string.rep("█", filled), string.rep("░", BAR_WIDTH - filled), percent),
-    })
-    local widest = 0
+    local percent = percent_of(tasks)
+    local label = (" %d%%"):format(percent)
+    local cells = math.max(MIN_BAR, width - 2 - #label)
+    local filled = math.floor(cells * percent / 100)
+    local full, empty = string.rep("█", filled), string.rep("░", cells - filled)
+    local colour = "DiagnosticOk"
     for _, task in ipairs(tasks) do
-      widest = math.max(widest, vim.fn.strdisplaywidth(text(task.name)))
+      if task.state == "blocked" then
+        colour = "DiagnosticError"
+        break
+      elseif task.state == "in_progress" then
+        colour = "DiagnosticInfo"
+      end
     end
-    for i, task in ipairs(tasks) do
+    table.insert(lines, "[" .. full .. empty .. "]" .. label)
+    highlight(1, 1 + #full, colour)
+    highlight(1 + #full, 1 + #full + #empty, "Comment")
+
+    local shown, folded = tasks, 0
+    if #tasks > FOLD_OVER then
+      shown = vim.tbl_filter(function(task)
+        return task.state ~= "done"
+      end, tasks)
+      folded = #tasks - #shown
+    end
+    -- Names are cut so every state starts in one column inside the width: 8 cells for
+    -- "  ├─ 🟢 ", a space each side of the dots, at least 2 dots (6 when there's room).
+    local widest, longest_state = 0, 0
+    for _, task in ipairs(shown) do
+      widest = math.max(widest, width_of(text(task.name)))
+      longest_state = math.max(longest_state, width_of((STATES[task.state] or STATES.pending)[2]))
+    end
+    local room = width - 10 - longest_state
+    local least_dots = math.max(2, math.min(6, room - widest))
+    local column = math.max(1, math.min(widest, room - least_dots))
+
+    local rows = {}
+    if folded > 0 then
+      table.insert(rows, ("%s %d done"):format(STATES.done[1], folded))
+    end
+    for _, task in ipairs(shown) do
       local state = STATES[task.state] or STATES.pending
-      local name = text(task.name)
-      local dots = string.rep(".", widest - vim.fn.strdisplaywidth(name) + 6)
+      local name = fit(text(task.name), column)
+      local dots = string.rep(".", column - width_of(name) + least_dots)
       local detail = text(task.detail)
       local after = (task.state == "in_progress" or task.state == "blocked") and detail ~= "" and (" (" .. detail .. ")") or ""
-      table.insert(lines, ("  %s %s %s %s %s%s"):format(i == #tasks and "└─" or "├─", state[1], name, dots, state[2], after))
+      table.insert(rows, ("%s %s %s %s%s"):format(state[1], name, dots, state[2], after))
+    end
+    for i, row in ipairs(rows) do
+      table.insert(lines, ("  %s %s"):format(i == #rows and "└─" or "├─", row))
     end
   end
 
@@ -175,7 +267,7 @@ function M.render(data)
     vim.list_extend(lines, { "", "# Details" })
     vim.list_extend(lines, details)
   end
-  return table.concat(lines, "\n")
+  return lines, highlights
 end
 
 -- Per tab id: { running, again, warned }.
@@ -235,6 +327,12 @@ function M.path(record)
     return nil
   end
   return start_folder .. "/.nvim/fterm/notes/" .. record.note_id .. ".claude.md"
+end
+
+-- Where Claude's structured reply is kept beside the sheet at `path` (the .claude.md),
+-- for the pane to draw at its own width.
+function M.data_path(path)
+  return (path:gsub("%.md$", ".json"))
 end
 
 local REDACTED = "[redacted]"
@@ -631,11 +729,21 @@ function run(record)
     M.last = { cost_usd = out.total_cost_usd, duration_ms = out.duration_ms }
     -- The structured reply, drawn in the user's shape; the plain text only if a reply
     -- somehow came back without it.
-    local sheet = type(out.structured_output) == "table" and M.render(out.structured_output) or sheet_from(out.result)
+    local data = type(out.structured_output) == "table" and out.structured_output or nil
+    local sheet = data and table.concat((M.render(data)), "\n") or sheet_from(out.result)
     -- The path again, from the note the run started with, not whatever the tab has now.
     local path = M.path { note_id = note_id }
     if sheet ~= "" and path and may_write(id, note_id) then
-      local written, write_err = write_atomically(path, sheet .. "\n")
+      local written, write_err = true, nil
+      if data then
+        written, write_err = write_atomically(M.data_path(path), vim.json.encode(data) .. "\n")
+      else
+        -- The pane draws from the .json when there is one, which would now be older.
+        os.remove(M.data_path(path))
+      end
+      if written then
+        written, write_err = write_atomically(path, sheet .. "\n")
+      end
       if written then
         vim.api.nvim_exec_autocmds("User", { pattern = "FloatTermClaudeNotesChanged", data = { note_id = note_id } })
       else

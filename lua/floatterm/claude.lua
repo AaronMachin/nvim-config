@@ -9,11 +9,13 @@
 --   SessionStart      kind = "claude" with its session_id. A `claude` typed in a
 --                     shell tab makes it a Claude tab this way
 --   UserPromptSubmit  status = "working", last_prompt = the prompt's first line
---   Notification      status = "needs_you", with a notification saying so, when
---                     Claude asks a question or for permission
+--   Notification      status = "needs_you" and needs_you_message = what it asks, with
+--                     a notification saying so, when Claude asks a question or for
+--                     permission
 --   PostToolUse       status back to "working" from "needs_you", as a tool only runs
 --                     once the question was answered
 --   Stop              status = "done"
+-- needs_you_message goes whenever the status moves on from "needs_you".
 --   SessionEnd        back to a shell tab, for when Claude exits and its shell stays
 --
 -- Only the Claude started directly in the tab counts: the tab's job itself, or a
@@ -37,7 +39,16 @@ local PROMPT_LENGTH = 80
 local CHECK_EVERY = 5000
 
 -- What SessionEnd clears from a record, besides start_ref (kept over a /clear).
-local CLAUDE_FIELDS = { "status", "status_since", "session_id", "transcript_path", "last_prompt", "shell_title", "claude_pid" }
+local CLAUDE_FIELDS = {
+  "status",
+  "status_since",
+  "needs_you_message",
+  "session_id",
+  "transcript_path",
+  "last_prompt",
+  "shell_title",
+  "claude_pid",
+}
 
 local timer = nil
 
@@ -194,22 +205,26 @@ local function apply(record, event, pid)
     record_start_ref(record)
   elseif name == "UserPromptSubmit" then
     claude.status = "working"
+    claude.needs_you_message = vim.NIL
     claude.last_prompt = first_line(event.prompt)
     floatterm.update(record.buf, claude)
   elseif name == "Notification" then
     if event.notification_type and not ASKS[event.notification_type] then
       return
     end
-    claude.status = "needs_you"
-    floatterm.update(record.buf, claude)
     local message = vim.trim(text(event.message))
+    claude.status = "needs_you"
+    -- One line, for the notes pane to show above the status bar.
+    claude.needs_you_message = (message:gsub("%s+", " "))
+    floatterm.update(record.buf, claude)
     vim.notify("✳ " .. floatterm.name(record) .. " needs you: " .. (message ~= "" and message or "Claude is waiting"))
   elseif name == "PostToolUse" then
     if record.status == "needs_you" then
-      floatterm.update(record.buf, { status = "working" })
+      floatterm.update(record.buf, { status = "working", needs_you_message = vim.NIL })
     end
   elseif name == "Stop" then
     claude.status = "done"
+    claude.needs_you_message = vim.NIL
     floatterm.update(record.buf, claude)
     pcall(function() require("floatterm.claude_notes").on_stop(record) end)
   elseif name == "SessionEnd" then

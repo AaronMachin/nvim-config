@@ -6,6 +6,10 @@
 --   <note_id>.md         yours: an ordinary markdown file, saved as you go
 --   <note_id>.claude.md  Claude's, written by lua/floatterm/claude_notes after its turns,
 --                        which then fires User FloatTermClaudeNotesChanged { note_id }
+--   <note_id>.claude.json  the data Claude's is drawn from, which the pane draws at its
+--                        own width (the .md is drawn at a fixed one), with the status
+--                        bar coloured and, while the tab's Claude waits on you, what
+--                        it's asking above the bar. A note without one shows the .md.
 -- Switching notes off only hides the pane; the files stay, and lua/floatterm/restore
 -- keeps the note_id with the tab. Yours is deleted when its tab closes with nothing in
 -- it but the heading it started with.
@@ -31,6 +35,7 @@ local api = vim.api
 local settings = require "floatterm.settings"
 
 local CLAUDE_EMPTY = "Claude's notes appear after its next turn"
+local CLAUDE_NS = api.nvim_create_namespace "floatterm_claude_notes"
 local SIDES = {
   { "<C-S-h>", "<C-S-Left>", "left" },
   { "<C-S-l>", "<C-S-Right>", "right" },
@@ -45,8 +50,10 @@ M.folder = nil
 -- the terminal rather than in a box of their own, and whether the cursor has gone from
 -- yours into a prompt or popup it'll come back from.
 local pane = { mine = nil, claude = nil, buf = nil, overlay = false, away = false }
--- Claude's part of each note, by note_id: a scratch buffer holding the file's text.
+-- Claude's part of each note, by note_id: a scratch buffer drawn from what's in
+-- claude_sheets, { data = the .json } or { lines = the .md's }, read when it changes.
 local claude_bufs = {}
+local claude_sheets = {}
 -- Buffers whose keys are set: notes buffers, and terminal tabs (for Y).
 local configured = {}
 local tab_keys = {}
@@ -79,7 +86,7 @@ end
 
 local function paths_for(note_id)
   local base = M.dir() .. "/" .. note_id
-  return { mine = base .. ".md", claude = base .. ".claude.md" }
+  return { mine = base .. ".md", claude = base .. ".claude.md", claude_json = base .. ".claude.json" }
 end
 
 -- A tab's notes files, { mine, claude }, or nil when it has no notes. Makes the folder
@@ -192,18 +199,81 @@ local function mine_buf(record)
   return buf
 end
 
--- Reads Claude's file into its buffer.
+-- Claude's part of a note as { data } from its .json, else { lines } from its .md.
+local function read_sheet(note_id)
+  local paths = paths_for(note_id)
+  local file = io.open(paths.claude_json, "r")
+  if file then
+    local text = file:read "*a"
+    file:close()
+    local ok, data = pcall(vim.json.decode, text or "", { luanil = { object = true, array = true } })
+    if ok and type(data) == "table" then
+      return { data = data }
+    end
+  end
+  return { lines = read_lines(paths.claude) or {} }
+end
+
+-- What the tab's Claude is asking while it waits on you ("" without a message), or nil.
+local function needs_you(record)
+  if record and record.status == "needs_you" then
+    return record.needs_you_message or ""
+  end
+  return nil
+end
+
+-- Claude's part as lines and highlights at `width`, and whether there's nothing yet.
+local function claude_lines(sheet, width, record)
+  local claude_notes = require "floatterm.claude_notes"
+  local asking = needs_you(record)
+  if sheet.data then
+    local lines, highlights = claude_notes.render(sheet.data, { width = width, needs_you = asking })
+    return lines, highlights, false
+  end
+  local empty = #sheet.lines == 0
+  local lines, highlights = vim.list_extend({}, empty and { CLAUDE_EMPTY } or sheet.lines), {}
+  -- Without the data there's no telling where the bar is, so it goes first.
+  if asking then
+    local line, group = claude_notes.needs_you_line(asking)
+    table.insert(lines, 1, line)
+    highlights[1] = { line = 0, col = 0, end_col = #line, group = group }
+  end
+  return lines, highlights, empty
+end
+
+-- Puts lines into a buffer that isn't edited, with their highlights. The lines are only
+-- set when they changed, so redraws don't move the cursor of someone reading them.
+local function show_lines(buf, lines, highlights)
+  if not vim.deep_equal(api.nvim_buf_get_lines(buf, 0, -1, false), lines) then
+    vim.bo[buf].modifiable = true
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].modified = false
+  end
+  api.nvim_buf_clear_namespace(buf, CLAUDE_NS, 0, -1)
+  for _, hl in ipairs(highlights) do
+    -- Above markdown's own highlighting, which takes the bar for a link.
+    pcall(api.nvim_buf_set_extmark, buf, CLAUDE_NS, hl.line, hl.col, {
+      end_col = hl.end_col,
+      hl_group = hl.group,
+      priority = 200,
+    })
+  end
+end
+
+-- Reads Claude's files again, for the next draw.
 local function load_claude(note_id)
+  claude_sheets[note_id] = read_sheet(note_id)
+end
+
+-- Draws Claude's part of a note into its buffer at `width`, for the tab `record`.
+local function render_claude(note_id, width, record)
   local buf = claude_bufs[note_id]
   if not (buf and api.nvim_buf_is_valid(buf)) then
     return
   end
-  local lines = read_lines(paths_for(note_id).claude) or {}
-  local empty = #lines == 0
-  vim.bo[buf].modifiable = true
-  api.nvim_buf_set_lines(buf, 0, -1, false, empty and { CLAUDE_EMPTY } or lines)
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].modified = false
+  local lines, highlights, empty = claude_lines(claude_sheets[note_id] or read_sheet(note_id), width, record)
+  show_lines(buf, lines, highlights)
   vim.b[buf].floatterm_notes_empty = empty
 end
 
@@ -213,6 +283,7 @@ local function claude_buf(note_id)
     buf = api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
     vim.bo[buf].filetype = "markdown"
+    vim.bo[buf].modifiable = false
     claude_bufs[note_id] = buf
     set_up_buffer(buf, false)
     load_claude(note_id)
@@ -289,10 +360,11 @@ local function display_lines(buf, width)
   return count
 end
 
--- When Claude's notes file was last rewritten: "14:32" today, "28 Oct" before, nil
--- when there isn't one yet.
-local function refreshed_at(path)
-  local stat = path and vim.uv.fs_stat(path)
+-- When Claude's notes were last rewritten (the .json, else the .md): "14:32" today,
+-- "28 Oct" before, nil when there aren't any yet.
+local function refreshed_at(note_id)
+  local paths = paths_for(note_id)
+  local stat = vim.uv.fs_stat(paths.claude_json) or vim.uv.fs_stat(paths.claude)
   if not stat then
     return nil
   end
@@ -332,12 +404,17 @@ local function draw(record, box, overlay)
   local mine = mine_buf(record)
   local width = math.max(1, box.width - 2)
   local zindex = overlay and 60 or 50
-  local show_claude = ((record.kind == "claude" and settings.get "claude_notes") or vim.uv.fs_stat(paths.claude) ~= nil)
-    and box.height >= 6
+  local show_claude = (
+    (record.kind == "claude" and settings.get "claude_notes")
+    or vim.uv.fs_stat(paths.claude) ~= nil
+    or vim.uv.fs_stat(paths.claude_json) ~= nil
+  ) and box.height >= 6
 
   local top, height = box.row, box.height
   if show_claude then
     local cbuf = claude_buf(record.note_id)
+    -- At the part's width, so the bar fits it.
+    render_claude(record.note_id, width, record)
     -- Yours keeps at least one line.
     -- Claude's part takes up to the claude_notes_share setting of the pane, less when
     -- it's short.
@@ -358,7 +435,7 @@ local function draw(record, box, overlay)
     -- the estimate.
     local total = api.nvim_win_text_height(pane.claude, {}).all
     config.height = math.max(1, math.min(room, total))
-    config.title = claude_title(total - config.height, width, refreshed_at(paths.claude))
+    config.title = claude_title(total - config.height, width, refreshed_at(record.note_id))
     api.nvim_win_set_config(pane.claude, config)
     -- Always from the top, where the summary is, unless you're in it reading.
     if api.nvim_get_current_win() ~= pane.claude then
@@ -594,8 +671,8 @@ function M.read_claude()
   local from_win, from_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
   -- Your notes' file is <note_id>.md.
   local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
-  local lines = note_id and read_lines(paths_for(note_id).claude) or {}
-  if #lines == 0 then
+  local sheet = note_id and read_sheet(note_id) or { lines = {} }
+  if not sheet.data and #sheet.lines == 0 then
     vim.notify("No Claude notes for this tab yet", vim.log.levels.INFO)
     return
   end
@@ -605,15 +682,16 @@ function M.read_claude()
     vim.cmd "stopinsert"
   end
 
-  local buf = api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = "wipe"
-  api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].filetype = "markdown"
-
   local width = math.max(20, math.min(100, vim.o.columns - 6))
   local most = math.max(3, math.min(math.floor(vim.o.lines * 0.8), vim.o.lines - 6))
   local record = pane.buf and floatterm().record(pane.buf)
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].filetype = "markdown"
+  -- The same drawing as the pane, at the pop-up's width.
+  show_lines(buf, claude_lines(sheet, width, record))
+
+  local refreshed = refreshed_at(note_id)
   local config = {
     relative = "editor",
     row = 0,
@@ -624,7 +702,7 @@ function M.read_claude()
     border = "rounded",
     title = (" ✳ Claude%s%s "):format(
       record and (" · " .. floatterm().name(record)) or "",
-      refreshed_at(paths_for(note_id).claude) and (" · refreshed " .. refreshed_at(paths_for(note_id).claude)) or ""
+      refreshed and (" · refreshed " .. refreshed) or ""
     ),
     title_pos = "center",
     footer = " q or Esc closes · y copies ",
@@ -925,8 +1003,10 @@ function M.delete(note_id)
     end
   end
   claude_bufs[note_id] = nil
+  claude_sheets[note_id] = nil
   os.remove(paths.mine)
   os.remove(paths.claude)
+  os.remove(paths.claude_json)
 end
 
 local function size_text(bytes)
@@ -1123,9 +1203,12 @@ function M.setup()
       end
       if args.match == "FloatTermTabChanged" then
         -- The tab bar's once-a-second title and command updates don't change the pane.
+        -- The status and what Claude asks only matter to the tab whose notes show (the
+        -- needs-you line), and are drawn now rather than at the next summary.
         local relevant = false
         for _, field in ipairs(args.data.fields or {}) do
           relevant = relevant or field == "notes_on" or field == "note_id" or field == "kind" or field == "label"
+            or ((field == "status" or field == "needs_you_message") and args.data.buf == pane.buf)
         end
         if not relevant then
           return
