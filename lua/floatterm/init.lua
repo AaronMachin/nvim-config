@@ -239,14 +239,18 @@ local function carve_notes(parts, record, p)
   if not box_mode and (side == "left" or side == "right") then
     local width = math.floor(t.width * share)
     if width - 2 >= NOTES_MIN_COLS and t.width - width - 2 >= MIN_COLS then
-      parts.notes = { row = t.row, height = t.height, width = width, col = side == "left" and t.col or t.col + t.width - width }
-      parts.terminal = { row = t.row, height = t.height, width = t.width - width, col = side == "left" and t.col + width or t.col }
+      parts.notes =
+        { row = t.row, height = t.height, width = width, col = side == "left" and t.col or t.col + t.width - width }
+      parts.terminal =
+        { row = t.row, height = t.height, width = t.width - width, col = side == "left" and t.col + width or t.col }
     end
   elseif not box_mode then
     local height = math.floor(t.height * share)
     if height - 2 >= NOTES_MIN_ROWS and t.height - height - 2 >= MIN_ROWS then
-      parts.notes = { col = t.col, width = t.width, height = height, row = side == "top" and t.row or t.row + t.height - height }
-      parts.terminal = { col = t.col, width = t.width, height = t.height - height, row = side == "top" and t.row + height or t.row }
+      parts.notes =
+        { col = t.col, width = t.width, height = height, row = side == "top" and t.row or t.row + t.height - height }
+      parts.terminal =
+        { col = t.col, width = t.width, height = t.height - height, row = side == "top" and t.row + height or t.row }
     end
   end
   parts.notes_hidden = parts.notes == nil
@@ -521,12 +525,12 @@ local function open_split(buf)
   end
 
   local bar = settings.get "tabbar"
-  local fits = split({
+  local fits = split {
     row = 0,
     col = 0,
     height = (horizontal and size or select(1, editor_area())) + 2,
     width = (horizontal and vim.o.columns or size) + 2,
-  })
+  }
 
   if not fits.tabbar then
     win = api.nvim_open_win(buf, true, edge)
@@ -665,7 +669,9 @@ local function map_tab_keys(buf, modes)
   -- Ctrl+Space (<C-Space>, or NUL as <C-@> in some terminal apps) works too where it
   -- gets through.
   for _, lhs in ipairs { "<C-S-Space>", "<C-Space>", "<C-@>" } do
-    map(lhs, function() require("floatterm.menu").open() end, "terminal options panel")
+    map(lhs, function()
+      require("floatterm.menu").open()
+    end, "terminal options panel")
   end
   map("<C-S-\\>", M.next_tab, "terminal next tab")
   map("<C-S-n>", M.next_tab, "terminal next tab")
@@ -678,13 +684,17 @@ local function map_tab_keys(buf, modes)
     { "<C-S-Down>", "<C-S-j>", "bottom" },
   } do
     for i = 1, 2 do
-      map(keys[i], function() M.move(keys[3]) end, "terminal move " .. keys[3] .. " (or resize at that edge)")
+      map(keys[i], function()
+        M.move(keys[3])
+      end, "terminal move " .. keys[3] .. " (or resize at that edge)")
     end
   end
   map("<C-S-d>", M.toggle_split, "terminal switch between floating and a split")
   -- Ctrl+Option+arrows reorder tabs, where the terminal app sends Option as Alt.
   for lhs, delta in pairs { ["<C-M-Left>"] = -1, ["<C-M-Up>"] = -1, ["<C-M-Right>"] = 1, ["<C-M-Down>"] = 1 } do
-    map(lhs, function() M.move_tab(buf, delta) end, "terminal move tab " .. (delta < 0 and "earlier" or "later"))
+    map(lhs, function()
+      M.move_tab(buf, delta)
+    end, "terminal move tab " .. (delta < 0 and "earlier" or "later"))
   end
   -- Not Ctrl+Shift+m: Neovim reads that as Shift+Enter, which Claude needs for new lines.
   map("<C-S-g>", M.switch_mode, "terminal switch between docked and floating box")
@@ -941,11 +951,15 @@ function M.close_current()
     close()
     return
   end
-  vim.ui.select({ "Close it", "Keep it" }, { prompt = "Close the Claude tab " .. M.name(record) .. "?" }, function(choice)
-    if choice == "Close it" then
-      close()
+  vim.ui.select(
+    { "Close it", "Keep it" },
+    { prompt = "Close the Claude tab " .. M.name(record) .. "?" },
+    function(choice)
+      if choice == "Close it" then
+        close()
+      end
     end
-  end)
+  )
 end
 
 function M.previous_tab()
@@ -1161,7 +1175,11 @@ api.nvim_create_autocmd("WinClosed", {
           bar_win = nil
         end
         -- The notes window held beside the split goes the same way.
-        if orphan_notes and api.nvim_win_is_valid(orphan_notes) and (orphan_notes ~= notes_win or not win_is_open()) then
+        if
+          orphan_notes
+          and api.nvim_win_is_valid(orphan_notes)
+          and (orphan_notes ~= notes_win or not win_is_open())
+        then
           pcall(api.nvim_win_close, orphan_notes, true)
           if orphan_notes == notes_win then
             notes_win = nil

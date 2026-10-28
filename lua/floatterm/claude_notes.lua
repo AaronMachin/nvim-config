@@ -231,7 +231,10 @@ function M.render(data, opts)
       local name = fit(text(task.name), column)
       local dots = string.rep(".", column - width_of(name) + least_dots)
       local detail = text(task.detail)
-      local after = (task.state == "in_progress" or task.state == "blocked") and detail ~= "" and (" (" .. detail .. ")") or ""
+      local after = (task.state == "in_progress" or task.state == "blocked")
+          and detail ~= ""
+          and (" (" .. detail .. ")")
+        or ""
       table.insert(rows, ("%s %s %s %s%s"):format(state[1], name, dots, state[2], after))
     end
     for i, row in ipairs(rows) do
@@ -283,7 +286,11 @@ local function find(id)
 end
 
 local function wanted(record)
-  return record and record.kind == "claude" and record.notes_on and record.note_id and record.transcript_path
+  return record
+    and record.kind == "claude"
+    and record.notes_on
+    and record.note_id
+    and record.transcript_path
     and settings.get "claude_notes"
 end
 
@@ -341,7 +348,10 @@ local REDACTED = "[redacted]"
 -- or ending in token or api key (so max_tokens is kept).
 local function secret_name(name)
   name = name:lower()
-  return name:find "password" or name:find "passwd" or name:find "secret" or name:find "token$"
+  return name:find "password"
+    or name:find "passwd"
+    or name:find "secret"
+    or name:find "token$"
     or name:find "api[_%-]?key$"
 end
 
@@ -402,11 +412,13 @@ local function redact_values(text)
   end
   table.insert(out, text:sub(from))
   text = table.concat(out)
-  return (text:gsub("(%-%-([%w_%-]+)%s+)([^%s%-][^%s]*)", function(flag, name)
-    if secret_name(name) then
-      return flag .. REDACTED
-    end
-  end))
+  return (
+    text:gsub("(%-%-([%w_%-]+)%s+)([^%s%-][^%s]*)", function(flag, name)
+      if secret_name(name) then
+        return flag .. REDACTED
+      end
+    end)
+  )
 end
 
 -- Replaces anything that looks like a secret with [redacted]: private keys, auth

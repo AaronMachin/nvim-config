@@ -34,7 +34,9 @@ if receipt then
   if version and version ~= "2" then
     vim.schedule(function()
       vim.notify(
-        "vue-language-server " .. version .. ".x is installed, which this config can't use. "
+        "vue-language-server "
+          .. version
+          .. ".x is installed, which this config can't use. "
           .. "Run :MasonInstall vue-language-server@2.2.8",
         vim.log.levels.WARN
       )

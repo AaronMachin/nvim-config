@@ -38,7 +38,9 @@ describe("grepmask", function()
     assert.equals(20, #state.recent)
     assert.equals("*.3", state.recent[1])
     assert.equals("*.25", state.recent[2])
-    assert.equals(1, #vim.tbl_filter(function(m) return m == "*.3" end, state.recent))
+    assert.equals(1, #vim.tbl_filter(function(m)
+      return m == "*.3"
+    end, state.recent))
   end)
 
   it("survives an unreadable state file", function()
@@ -54,7 +56,8 @@ describe("grepmask", function()
     end
 
     it("searches for the text as written by default, with the default excludes before the mask", function()
-      local args = grepmask.build_command("a.b", "*.php, !vendor/**", { case = false, word = false, regex = false }, true)
+      local args =
+        grepmask.build_command("a.b", "*.php, !vendor/**", { case = false, word = false, regex = false }, true)
       assert.is_true(has(args, "--fixed-strings"))
       assert.is_false(has(args, "--case-sensitive"))
       local first_default = vim.fn.index(args, "--glob=!*.lock")

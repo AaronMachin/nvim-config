@@ -158,9 +158,13 @@ local function watch()
     return
   end
   timer = vim.uv.new_timer()
-  timer:start(CHECK_EVERY, CHECK_EVERY, vim.schedule_wrap(function()
-    pcall(check)
-  end))
+  timer:start(
+    CHECK_EVERY,
+    CHECK_EVERY,
+    vim.schedule_wrap(function()
+      pcall(check)
+    end)
+  )
 end
 
 -- The commit Claude started on, for agent.review. Only set once per Claude run, so
@@ -226,7 +230,9 @@ local function apply(record, event, pid)
     claude.status = "done"
     claude.needs_you_message = vim.NIL
     floatterm.update(record.buf, claude)
-    pcall(function() require("floatterm.claude_notes").on_stop(record) end)
+    pcall(function()
+      require("floatterm.claude_notes").on_stop(record)
+    end)
   elseif name == "SessionEnd" then
     to_shell(record, event.reason == "clear")
     return

@@ -662,8 +662,12 @@ function M.hide_float()
   local terminal = ft.window()
   for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
     local buf = api.nvim_win_get_buf(win)
-    if api.nvim_win_get_config(win).relative == "" and win ~= terminal and win ~= layout.notes_window
-      and vim.bo[buf].buftype == "" then
+    if
+      api.nvim_win_get_config(win).relative == ""
+      and win ~= terminal
+      and win ~= layout.notes_window
+      and vim.bo[buf].buftype == ""
+    then
       api.nvim_set_current_win(win)
       return
     end
@@ -834,7 +838,9 @@ set_up_buffer = function(buf, editable)
   end
   for _, keys in ipairs(SIDES) do
     for i = 1, 2 do
-      map(modes, keys[i], function() side_key(keys[3]) end, "notes move to the " .. keys[3] .. " (or resize on that side)")
+      map(modes, keys[i], function()
+        side_key(keys[3])
+      end, "notes move to the " .. keys[3] .. " (or resize on that side)")
     end
   end
   map(modes, "<C-S-e>", M.toggle_focus, "notes back to the terminal")
@@ -1335,7 +1341,11 @@ function M.setup()
         -- needs-you line), and are drawn now rather than at the next summary.
         local relevant = false
         for _, field in ipairs(args.data.fields or {}) do
-          relevant = relevant or field == "notes_on" or field == "note_id" or field == "kind" or field == "label"
+          relevant = relevant
+            or field == "notes_on"
+            or field == "note_id"
+            or field == "kind"
+            or field == "label"
             or ((field == "status" or field == "needs_you_message") and args.data.buf == pane.buf)
         end
         if not relevant then
@@ -1397,7 +1407,13 @@ function M.setup()
         -- The prompt closed into the terminal rather than back into the notes.
         vim.schedule(function()
           local now = api.nvim_get_current_win()
-          if pane.overlay and pane.mine and api.nvim_win_is_valid(pane.mine) and not in_pane(now) and not is_prompt(now) then
+          if
+            pane.overlay
+            and pane.mine
+            and api.nvim_win_is_valid(pane.mine)
+            and not in_pane(now)
+            and not is_prompt(now)
+          then
             api.nvim_set_current_win(pane.mine)
           end
         end)

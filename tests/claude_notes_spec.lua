@@ -38,10 +38,10 @@ describe("Claude's notes", function()
     it("works the percentage out from the tasks, half for one under way, rounded down", function()
       local lines = cn.render { summary = "s", tasks = { task("a", "done"), task("b", "in_progress") } }
       local _, bar = find_line(lines, "^%[")
-      assert.truthy(bar:find(" 75%%$"))
+      assert.truthy(bar:find " 75%%$")
       lines = cn.render { summary = "s", tasks = { task("a", "done"), task("b", "pending"), task("c", "blocked") } }
       _, bar = find_line(lines, "^%[")
-      assert.truthy(bar:find(" 33%%$"))
+      assert.truthy(bar:find " 33%%$")
     end)
 
     it("draws the bar to the width it's given, with a minimum", function()
@@ -74,7 +74,10 @@ describe("Claude's notes", function()
       for i = 1, 4 do
         table.insert(tasks, task("done " .. i, "done"))
       end
-      vim.list_extend(tasks, { task("now", "in_progress", "writing"), task("next", "pending"), task("later", "pending") })
+      vim.list_extend(
+        tasks,
+        { task("now", "in_progress", "writing"), task("next", "pending"), task("later", "pending") }
+      )
       local lines = cn.render { summary = "s", tasks = tasks }
       assert.is_not_nil(find_line(lines, "├─ 🟢 4 done$"))
       assert.is_nil(find_line(lines, "done 1"))
@@ -117,7 +120,7 @@ describe("Claude's notes", function()
       assert.equals("#auth #two-words", lines[3])
       local i = find_line(lines, "^● Needs you: Allow Bash%?$")
       assert.is_not_nil(i)
-      assert.truthy(lines[i + 1]:find("^%["))
+      assert.truthy(lines[i + 1]:find "^%[")
       assert.equals("FloatTermNeedsYou", highlights[1].group)
     end)
   end)
@@ -171,15 +174,25 @@ describe("Claude's notes", function()
       local text = jsonl {
         { type = "user", message = { content = "old prompt" } },
         { type = "user", gitBranch = "SD-1-x", message = { content = "deploy it, password=hunter22" } },
-        { type = "assistant", message = { content = {
-          { type = "text", text = "Deploying." },
-          { type = "tool_use", id = "t1", name = "Bash", input = { command = "make deploy" } },
-          { type = "tool_use", id = "t2", name = "Read", input = { file_path = "/x" } },
-        } } },
-        { type = "user", message = { content = {
-          { type = "tool_result", tool_use_id = "t1", content = "done in 3s" },
-          { type = "tool_result", tool_use_id = "t2", content = "file text" },
-        } } },
+        {
+          type = "assistant",
+          message = {
+            content = {
+              { type = "text", text = "Deploying." },
+              { type = "tool_use", id = "t1", name = "Bash", input = { command = "make deploy" } },
+              { type = "tool_use", id = "t2", name = "Read", input = { file_path = "/x" } },
+            },
+          },
+        },
+        {
+          type = "user",
+          message = {
+            content = {
+              { type = "tool_result", tool_use_id = "t1", content = "done in 3s" },
+              { type = "tool_result", tool_use_id = "t2", content = "file text" },
+            },
+          },
+        },
         { type = "user", isMeta = true, message = { content = "skill text" } },
       }
       local turn = cn.turn_from(text)
@@ -193,7 +206,9 @@ describe("Claude's notes", function()
     end)
 
     it("gives nothing without a prompt", function()
-      assert.is_nil(cn.turn_from(jsonl { { type = "assistant", message = { content = { { type = "text", text = "hi" } } } } }))
+      assert.is_nil(
+        cn.turn_from(jsonl { { type = "assistant", message = { content = { { type = "text", text = "hi" } } } } })
+      )
     end)
   end)
 
@@ -208,12 +223,25 @@ describe("Claude's notes", function()
       log = H.tmpdir "claude-log"
       H.write(log .. "/delay", "0")
       H.write(log .. "/code", "0")
-      H.write(log .. "/reply.json", vim.json.encode {
-        result = "ok",
-        total_cost_usd = 0.001,
-        structured_output = { summary = "Fixing login", hashtags = { "auth" }, tasks = { { name = "fix", state = "done" } }, prs = {}, links = {}, details = {} },
-      })
-      H.script(bin, "claude", ([[
+      H.write(
+        log .. "/reply.json",
+        vim.json.encode {
+          result = "ok",
+          total_cost_usd = 0.001,
+          structured_output = {
+            summary = "Fixing login",
+            hashtags = { "auth" },
+            tasks = { { name = "fix", state = "done" } },
+            prs = {},
+            links = {},
+            details = {},
+          },
+        }
+      )
+      H.script(
+        bin,
+        "claude",
+        ([[
 L=%q
 echo run >>"$L/runs"
 printf '%%s\n' "$@" >"$L/args"
@@ -221,16 +249,20 @@ echo "tab=[$FLOATTERM_TAB_ID]" >"$L/env"
 cat >"$L/stdin"
 sleep "$(cat "$L/delay")"
 cat "$L/reply.json"
-exit "$(cat "$L/code")"]]):format(log))
+exit "$(cat "$L/code")"]]):format(log)
+      )
     end
 
     local function claude_tab(fields)
       local buf = H.sleep_tab { kind = "claude" }
-      ft.update(buf, vim.tbl_extend("force", {
-        notes_on = true,
-        note_id = "20261029-test",
-        transcript_path = transcript,
-      }, fields or {}))
+      ft.update(
+        buf,
+        vim.tbl_extend("force", {
+          notes_on = true,
+          note_id = "20261029-test",
+          transcript_path = transcript,
+        }, fields or {})
+      )
       return ft.record(buf)
     end
 
@@ -280,7 +312,7 @@ exit "$(cat "$L/code")"]]):format(log))
       assert.is_nil(stdin:find("abc123", 1, true))
       -- No temporary files left beside the sheet.
       for name in vim.fs.dir(notes.dir()) do
-        assert.is_nil(name:find("%.tmp$"), name)
+        assert.is_nil(name:find "%.tmp$", name)
       end
     end)
 

@@ -44,7 +44,12 @@ describe("laravel", function()
     -- route:list with a PHP warning before the JSON, as a real app sometimes prints.
     H.script(bin, "php", ('echo "Deprecated: something"; cat %q'):format(project .. "/routes.json"))
     local entries
-    laravel.routes { refresh = true, on_loaded = function(e) entries = e end }
+    laravel.routes {
+      refresh = true,
+      on_loaded = function(e)
+        entries = e
+      end,
+    }
     H.wait(5000, function()
       return entries ~= nil
     end)

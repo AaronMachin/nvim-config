@@ -33,7 +33,14 @@ local ROWS = {
   {
     key = "start_position",
     label = "Starting position",
-    choices = { { "bottom", "bottom" }, { "top", "top" }, { "left", "left" }, { "right", "right" }, { "box", "box" }, { "split", "split" } },
+    choices = {
+      { "bottom", "bottom" },
+      { "top", "top" },
+      { "left", "left" },
+      { "right", "right" },
+      { "box", "box" },
+      { "split", "split" },
+    },
     -- The float only reads it when nvim starts.
     note = "for a project that hasn't used the terminal yet",
   },
@@ -62,7 +69,11 @@ local ROWS = {
     choices = { { true, "on" }, { false, "off" } },
     note = "kept up to date after each turn",
   },
-  { key = "claude_notes_model", label = "Claude's notes model", choices = { { "haiku", "haiku" }, { "sonnet", "sonnet" } } },
+  {
+    key = "claude_notes_model",
+    label = "Claude's notes model",
+    choices = { { "haiku", "haiku" }, { "sonnet", "sonnet" } },
+  },
   {
     key = "claude_notes_share",
     label = "Claude's share",
@@ -362,10 +373,18 @@ function M.open()
       vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true })
     end
   end
-  map({ "j", "<Down>" }, function() move(1) end)
-  map({ "k", "<Up>" }, function() move(-1) end)
-  map({ "l", "<Right>" }, function() change(1) end)
-  map({ "h", "<Left>" }, function() change(-1) end)
+  map({ "j", "<Down>" }, function()
+    move(1)
+  end)
+  map({ "k", "<Up>" }, function()
+    move(-1)
+  end)
+  map({ "l", "<Right>" }, function()
+    change(1)
+  end)
+  map({ "h", "<Left>" }, function()
+    change(-1)
+  end)
   map({ "<CR>" }, enter)
   map({ "<Tab>", "<S-Tab>" }, next_part)
   map({ "q", "<Esc>", "<C-S-,>", "<C-lt>" }, M.close)

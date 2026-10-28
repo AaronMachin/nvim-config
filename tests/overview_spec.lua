@@ -31,7 +31,7 @@ describe("Claude overview", function()
     claude_tab("beta", { status = "done" })
     claude_tab("alpha", { status = "done" })
     claude_tab("gamma", { status = "needs_you" })
-    claude_tab("new")
+    claude_tab "new"
     local names = vim.tbl_map(function(item)
       return item.name
     end, overview.list())
@@ -52,10 +52,13 @@ describe("Claude overview", function()
 
   it("previews what Claude is asking on top, then its notes", function()
     claude_tab("api", { status = "needs_you", needs_you_message = "Allow Bash?", note_id = "20261029-ov02" })
-    H.write(notes.dir() .. "/20261029-ov02.claude.json", vim.json.encode {
-      summary = "Deploying",
-      tasks = { { name = "deploy", state = "in_progress" } },
-    })
+    H.write(
+      notes.dir() .. "/20261029-ov02.claude.json",
+      vim.json.encode {
+        summary = "Deploying",
+        tasks = { { name = "deploy", state = "in_progress" } },
+      }
+    )
     local lines, highlights = overview.preview_lines(overview.list()[1], 50)
     assert.equals("● Needs you: Allow Bash?", lines[1])
     assert.equals("FloatTermNeedsYou", highlights[1].group)
@@ -75,7 +78,7 @@ describe("Claude overview", function()
   end)
 
   it("says when a tab has no notes yet", function()
-    claude_tab("api")
+    claude_tab "api"
     local lines = overview.preview_lines(overview.list()[1], 50)
     assert.same({ "No Claude notes for this tab yet" }, lines)
   end)

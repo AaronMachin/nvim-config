@@ -113,17 +113,84 @@ return {
     end,
     cmd = { "DapContinue", "DapToggleBreakpoint" },
     keys = {
-      { "<F5>", function() require("debugger").continue() end, desc = "debug start or continue" },
-      { "<F9>", function() require("debugger").toggle_breakpoint() end, desc = "debug toggle breakpoint" },
-      { "<F10>", function() require("debugger").step_over() end, desc = "debug step over" },
-      { "<F11>", function() require("debugger").step_into() end, desc = "debug step into" },
-      { "<F12>", function() require("debugger").step_out() end, desc = "debug step out" },
-      { "<leader>db", function() require("debugger").toggle_breakpoint() end, desc = "debug toggle breakpoint" },
-      { "<leader>dB", function() require("debugger").conditional_breakpoint() end, desc = "debug conditional breakpoint" },
-      { "<leader>dc", function() require("debugger").continue() end, desc = "debug continue" },
-      { "<leader>dq", function() require("debugger").stop() end, desc = "debug stop" },
-      { "<leader>du", function() require("debugger").toggle_ui() end, desc = "debug show or hide panels" },
-      { "<leader>de", function() require("debugger").eval() end, mode = { "n", "x" }, desc = "debug evaluate" },
+      {
+        "<F5>",
+        function()
+          require("debugger").continue()
+        end,
+        desc = "debug start or continue",
+      },
+      {
+        "<F9>",
+        function()
+          require("debugger").toggle_breakpoint()
+        end,
+        desc = "debug toggle breakpoint",
+      },
+      {
+        "<F10>",
+        function()
+          require("debugger").step_over()
+        end,
+        desc = "debug step over",
+      },
+      {
+        "<F11>",
+        function()
+          require("debugger").step_into()
+        end,
+        desc = "debug step into",
+      },
+      {
+        "<F12>",
+        function()
+          require("debugger").step_out()
+        end,
+        desc = "debug step out",
+      },
+      {
+        "<leader>db",
+        function()
+          require("debugger").toggle_breakpoint()
+        end,
+        desc = "debug toggle breakpoint",
+      },
+      {
+        "<leader>dB",
+        function()
+          require("debugger").conditional_breakpoint()
+        end,
+        desc = "debug conditional breakpoint",
+      },
+      {
+        "<leader>dc",
+        function()
+          require("debugger").continue()
+        end,
+        desc = "debug continue",
+      },
+      {
+        "<leader>dq",
+        function()
+          require("debugger").stop()
+        end,
+        desc = "debug stop",
+      },
+      {
+        "<leader>du",
+        function()
+          require("debugger").toggle_ui()
+        end,
+        desc = "debug show or hide panels",
+      },
+      {
+        "<leader>de",
+        function()
+          require("debugger").eval()
+        end,
+        mode = { "n", "x" },
+        desc = "debug evaluate",
+      },
     },
   },
 

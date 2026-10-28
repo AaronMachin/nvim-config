@@ -228,7 +228,7 @@ local function edit_mask(session, picker)
   session.recent_index = 0
   session.typed_mask = session.mask
 
-  picker:change_prompt_prefix(" mask: ")
+  picker:change_prompt_prefix " mask: "
   picker.layout.prompt.border:change_title(title(session))
   picker:set_prompt(session.mask)
   draw_recent(session, picker)

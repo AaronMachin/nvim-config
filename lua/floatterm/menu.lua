@@ -29,43 +29,132 @@ end
 -- beside the action so it can be learnt; a table gives one per key.
 M.columns = {
   {
-    { "d", "split ↔ float", { d = function() floatterm().toggle_split() end }, "Ctrl+Shift+d" },
-    { "f", "full-screen", { f = function() floatterm().toggle_fullscreen() end }, "Ctrl+Shift+f" },
-    { "g", "dock ↔ box", { g = function() floatterm().switch_mode() end }, "Ctrl+Shift+g" },
+    {
+      "d",
+      "split ↔ float",
+      {
+        d = function()
+          floatterm().toggle_split()
+        end,
+      },
+      "Ctrl+Shift+d",
+    },
+    {
+      "f",
+      "full-screen",
+      {
+        f = function()
+          floatterm().toggle_fullscreen()
+        end,
+      },
+      "Ctrl+Shift+f",
+    },
+    { "g", "dock ↔ box", {
+      g = function()
+        floatterm().switch_mode()
+      end,
+    }, "Ctrl+Shift+g" },
     {
       "h j k l",
       "move / resize",
       {
-        h = function() floatterm().move "left" end,
-        j = function() floatterm().move "bottom" end,
-        k = function() floatterm().move "top" end,
-        l = function() floatterm().move "right" end,
+        h = function()
+          floatterm().move "left"
+        end,
+        j = function()
+          floatterm().move "bottom"
+        end,
+        k = function()
+          floatterm().move "top"
+        end,
+        l = function()
+          floatterm().move "right"
+        end,
       },
       { h = "Ctrl+Shift+h", j = "Ctrl+Shift+j", k = "Ctrl+Shift+k", l = "Ctrl+Shift+l" },
       { h = "move left / resize", j = "move down / resize", k = "move up / resize", l = "move right / resize" },
     },
-    { "s", "settings", { s = function() require("floatterm.config_page").open() end }, "Ctrl+Shift+," },
-    { "q", "hide or show", { q = function() floatterm().toggle() end }, "Ctrl+\\" },
-    { "e", "notes on / off", { e = function() notes().toggle_notes() end } },
-    { "i", "into notes ↔ terminal", { i = function() notes().toggle_focus() end }, "Ctrl+Shift+e" },
-    { "a", "add a note", { a = function() notes().add_note() end } },
+    {
+      "s",
+      "settings",
+      {
+        s = function()
+          require("floatterm.config_page").open()
+        end,
+      },
+      "Ctrl+Shift+,",
+    },
+    { "q", "hide or show", {
+      q = function()
+        floatterm().toggle()
+      end,
+    }, "Ctrl+\\" },
+    { "e", "notes on / off", {
+      e = function()
+        notes().toggle_notes()
+      end,
+    } },
+    {
+      "i",
+      "into notes ↔ terminal",
+      {
+        i = function()
+          notes().toggle_focus()
+        end,
+      },
+      "Ctrl+Shift+e",
+    },
+    { "a", "add a note", {
+      a = function()
+        notes().add_note()
+      end,
+    } },
   },
   {
-    { "t", "new tab", { t = function() floatterm().new_tab() end }, "Ctrl+t" },
-    { "n", "next tab", { n = function() floatterm().next_tab() end }, "Ctrl+Shift+n" },
-    { "p", "previous tab", { p = function() floatterm().previous_tab() end }, "Ctrl+Shift+p" },
-    { "b", "tab bar", { b = function() require("floatterm.tabbar").enter() end }, "Ctrl+Shift+b" },
+    { "t", "new tab", {
+      t = function()
+        floatterm().new_tab()
+      end,
+    }, "Ctrl+t" },
+    { "n", "next tab", {
+      n = function()
+        floatterm().next_tab()
+      end,
+    }, "Ctrl+Shift+n" },
+    { "p", "previous tab", {
+      p = function()
+        floatterm().previous_tab()
+      end,
+    }, "Ctrl+Shift+p" },
+    {
+      "b",
+      "tab bar",
+      {
+        b = function()
+          require("floatterm.tabbar").enter()
+        end,
+      },
+      "Ctrl+Shift+b",
+    },
     {
       "< >",
       "move tab earlier / later",
       {
-        ["<"] = function() floatterm().move_tab(floatterm().current_buf(), -1) end,
-        [">"] = function() floatterm().move_tab(floatterm().current_buf(), 1) end,
+        ["<"] = function()
+          floatterm().move_tab(floatterm().current_buf(), -1)
+        end,
+        [">"] = function()
+          floatterm().move_tab(floatterm().current_buf(), 1)
+        end,
       },
       { ["<"] = "Ctrl+Opt+←", [">"] = "Ctrl+Opt+→", all = "Ctrl+Opt+←/→" },
       { ["<"] = "move tab earlier", [">"] = "move tab later" },
     },
-    { "x", "close tab (force)", { x = function() floatterm().close_current() end } },
+    { "x", "close tab (force)", {
+      x = function()
+        floatterm().close_current()
+      end,
+    } },
     {
       "1-9",
       "go to tab",
@@ -77,9 +166,25 @@ M.columns = {
         return keys
       end)(),
     },
-    { "y", "selection to notes", { y = function() notes().capture() end }, "Y in a tab" },
-    { "o", "earlier notes", { o = function() notes().pick() end } },
-    { "r", "refresh Claude's notes", { r = function() require("floatterm.claude_notes").refresh() end } },
+    { "y", "selection to notes", {
+      y = function()
+        notes().capture()
+      end,
+    }, "Y in a tab" },
+    { "o", "earlier notes", {
+      o = function()
+        notes().pick()
+      end,
+    } },
+    {
+      "r",
+      "refresh Claude's notes",
+      {
+        r = function()
+          require("floatterm.claude_notes").refresh()
+        end,
+      },
+    },
   },
 }
 

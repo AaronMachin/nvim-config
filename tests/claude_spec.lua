@@ -85,10 +85,13 @@ describe("claude hooks", function()
 
     it("UserPromptSubmit: working, with the prompt's first line cut to 80", function()
       record.needs_you_message = "old"
-      claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "\n  " .. string.rep("x", 100) .. "\nmore" })
+      claude.apply(
+        record,
+        { hook_event_name = "UserPromptSubmit", prompt = "\n  " .. string.rep("x", 100) .. "\nmore" }
+      )
       assert.equals("working", record.status)
       assert.equals(80, vim.fn.strchars(record.last_prompt))
-      assert.truthy(record.last_prompt:find("…$"))
+      assert.truthy(record.last_prompt:find "…$")
       assert.is_nil(record.needs_you_message)
     end)
 

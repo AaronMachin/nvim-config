@@ -42,7 +42,9 @@ describe("testrun", function()
     vim.api.nvim_win_set_cursor(0, { 4, 0 })
     testrun.run "nearest"
     assert.equals(
-      "cd " .. vim.fn.shellescape(project) .. " && php artisan test --compact 'tests/Feature/LoginTest.php' --filter='logs in \\(with email\\)'",
+      "cd "
+        .. vim.fn.shellescape(project)
+        .. " && php artisan test --compact 'tests/Feature/LoginTest.php' --filter='logs in \\(with email\\)'",
       ran[1]
     )
     vim.api.nvim_win_set_cursor(0, { 8, 0 })

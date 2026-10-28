@@ -607,12 +607,24 @@ function M.map_bar_keys(buf)
   local function map(lhs, rhs, desc)
     vim.keymap.set("n", lhs, rhs, { buffer = buf, nowait = true, desc = desc })
   end
-  map("j", function() select(1) end, "tab bar next tab")
-  map("k", function() select(-1) end, "tab bar previous tab")
-  map("<Down>", function() select(1) end, "tab bar next tab")
-  map("<Up>", function() select(-1) end, "tab bar previous tab")
-  map("l", function() select(1) end, "tab bar next tab")
-  map("h", function() select(-1) end, "tab bar previous tab")
+  map("j", function()
+    select(1)
+  end, "tab bar next tab")
+  map("k", function()
+    select(-1)
+  end, "tab bar previous tab")
+  map("<Down>", function()
+    select(1)
+  end, "tab bar next tab")
+  map("<Up>", function()
+    select(-1)
+  end, "tab bar previous tab")
+  map("l", function()
+    select(1)
+  end, "tab bar next tab")
+  map("h", function()
+    select(-1)
+  end, "tab bar previous tab")
   map("<CR>", open_selected, "tab bar open tab")
   -- Capitals move the selected tab itself along, and the selection with it.
   for lhs, delta in pairs { K = -1, H = -1, J = 1, L = 1 } do
@@ -854,27 +866,37 @@ local function refresh_commands(tabs)
   M.ps_runs = M.ps_runs + 1
   local list = table.concat(vim.tbl_values(pids), ",")
   local ps = { "ps", "-o", "pid=,tpgid=,args=", "-p", list }
-  local ok = pcall(vim.system, ps, { text = true }, guarded(function(first)
-    local shells = parse_ps(first.stdout, true)
-    local groups = {}
-    for pid, shell in pairs(shells) do
-      if shell.tpgid > 0 and shell.tpgid ~= pid then
-        groups[shell.tpgid] = true
+  local ok = pcall(
+    vim.system,
+    ps,
+    { text = true },
+    guarded(function(first)
+      local shells = parse_ps(first.stdout, true)
+      local groups = {}
+      for pid, shell in pairs(shells) do
+        if shell.tpgid > 0 and shell.tpgid ~= pid then
+          groups[shell.tpgid] = true
+        end
       end
-    end
-    if vim.tbl_isempty(groups) then
-      finish(shells, {})
-      return
-    end
-    local leaders_list = table.concat(vim.tbl_keys(groups), ",")
-    local leaders_ps = { "ps", "-o", "pid=,args=", "-p", leaders_list }
-    local started = pcall(vim.system, leaders_ps, { text = true }, guarded(function(second)
-      finish(shells, parse_ps(second.stdout, false))
-    end))
-    if not started then
-      finish(shells, {})
-    end
-  end))
+      if vim.tbl_isempty(groups) then
+        finish(shells, {})
+        return
+      end
+      local leaders_list = table.concat(vim.tbl_keys(groups), ",")
+      local leaders_ps = { "ps", "-o", "pid=,args=", "-p", leaders_list }
+      local started = pcall(
+        vim.system,
+        leaders_ps,
+        { text = true },
+        guarded(function(second)
+          finish(shells, parse_ps(second.stdout, false))
+        end)
+      )
+      if not started then
+        finish(shells, {})
+      end
+    end)
+  )
   if not ok then
     busy = false
   end

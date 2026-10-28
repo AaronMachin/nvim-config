@@ -152,11 +152,14 @@ function M.list(cwd, on_status)
     end
   end)
 
-  local heads = vim.tbl_map(function(wt)
-    return wt.head
-  end, vim.tbl_filter(function(wt)
-    return wt.head and not wt.missing
-  end, list))
+  local heads = vim.tbl_map(
+    function(wt)
+      return wt.head
+    end,
+    vim.tbl_filter(function(wt)
+      return wt.head and not wt.missing
+    end, list)
+  )
   local commits = {}
   if #heads > 0 then
     local _, out = git(list[1].dir, vim.list_extend({ "log", "--no-walk=unsorted", "--format=%H%x09%ct%x09%s" }, heads))
@@ -513,7 +516,10 @@ function M.switch_main(dir)
     -- Saving one of these after the switch would write it over the other branch's file.
     local modified = modified_buffers(main.dir)
     if #modified > 0 then
-      notify("save or discard these in " .. main.name .. " first: " .. table.concat(modified, ", "), vim.log.levels.WARN)
+      notify(
+        "save or discard these in " .. main.name .. " first: " .. table.concat(modified, ", "),
+        vim.log.levels.WARN
+      )
       return
     end
     -- Claude would carry on in a worktree whose branch has moved out from under it.
@@ -555,7 +561,10 @@ function M.switch_main(dir)
       return
     end
     if fresh ~= changes then
-      table.insert(notes, string.format("main had %s by the time you confirmed, not the %d the confirm said", files(fresh), changes))
+      table.insert(
+        notes,
+        string.format("main had %s by the time you confirmed, not the %d the confirm said", files(fresh), changes)
+      )
     end
     if was_on ~= "" then
       table.insert(notes, "main was " .. was_on)
@@ -796,8 +805,18 @@ function M.pick()
     },
     attach_mappings = function(prompt_bufnr, map)
       actions.select_default:replace(with_selection(prompt_bufnr, M.switch))
-      map({ "i", "n" }, "<C-a>", with_selection(prompt_bufnr, start_agent), { desc = "worktrees start or focus Claude" })
-      map({ "i", "n" }, "<C-s>", with_selection(prompt_bufnr, M.switch_main), { desc = "worktrees main checks out its branch" })
+      map(
+        { "i", "n" },
+        "<C-a>",
+        with_selection(prompt_bufnr, start_agent),
+        { desc = "worktrees start or focus Claude" }
+      )
+      map(
+        { "i", "n" },
+        "<C-s>",
+        with_selection(prompt_bufnr, M.switch_main),
+        { desc = "worktrees main checks out its branch" }
+      )
       return true
     end,
   })

@@ -202,16 +202,20 @@ end
 local function when_ready(tab, fn)
   local waited = 0
   local timer = vim.uv.new_timer()
-  timer:start(200, 200, vim.schedule_wrap(function()
-    waited = waited + 200
-    local drawn = api.nvim_buf_is_valid(tab.buf)
-      and #vim.trim(table.concat(api.nvim_buf_get_lines(tab.buf, 0, -1, false), "")) > 0
-    if drawn or waited >= 8000 then
-      timer:stop()
-      timer:close()
-      vim.defer_fn(fn, 1000)
-    end
-  end))
+  timer:start(
+    200,
+    200,
+    vim.schedule_wrap(function()
+      waited = waited + 200
+      local drawn = api.nvim_buf_is_valid(tab.buf)
+        and #vim.trim(table.concat(api.nvim_buf_get_lines(tab.buf, 0, -1, false), "")) > 0
+      if drawn or waited >= 8000 then
+        timer:stop()
+        timer:close()
+        vim.defer_fn(fn, 1000)
+      end
+    end)
+  )
 end
 
 -- Pastes `text` into the target tab without submitting it, then shows the tab.
@@ -223,7 +227,10 @@ local function paste(build)
     return
   end
   if fallback then
-    vim.notify("agent: this buffer isn't in a git repository, so it went to the Claude tab in " .. vim.fn.fnamemodify(tab.dir, ":t"))
+    vim.notify(
+      "agent: this buffer isn't in a git repository, so it went to the Claude tab in "
+        .. vim.fn.fnamemodify(tab.dir, ":t")
+    )
   end
   local text = build(tab.dir)
 
@@ -413,7 +420,10 @@ function M.review()
     return
   end
   if fallback then
-    vim.notify("agent: this buffer isn't in a git repository, so reviewing the Claude tab in " .. vim.fn.fnamemodify(tab.dir, ":t"))
+    vim.notify(
+      "agent: this buffer isn't in a git repository, so reviewing the Claude tab in "
+        .. vim.fn.fnamemodify(tab.dir, ":t")
+    )
   end
   if not tab.start_ref then
     vim.notify("agent: " .. tab.dir .. " had no commit when Claude started", vim.log.levels.WARN)
@@ -503,7 +513,7 @@ function M.commit_message()
         table.insert(suggestion, line:match "^#" and line or ("# " .. line))
       end
       api.nvim_buf_set_lines(buf, -1, -1, false, suggestion)
-      vim.notify("agent: you'd typed in the message, so Claude's suggestion is added below it as comments")
+      vim.notify "agent: you'd typed in the message, so Claude's suggestion is added below it as comments"
       return
     end
     api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -537,7 +547,10 @@ function M.commit_message()
           os.remove(path)
           committing = false
           if result.code ~= 0 then
-            vim.notify("agent: " .. vim.trim(result.stderr ~= "" and result.stderr or result.stdout), vim.log.levels.ERROR)
+            vim.notify(
+              "agent: " .. vim.trim(result.stderr ~= "" and result.stderr or result.stdout),
+              vim.log.levels.ERROR
+            )
             return
           end
           committed = true

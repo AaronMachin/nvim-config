@@ -45,11 +45,14 @@ describe("tab bar", function()
       -- shell's title don't count.
       assert.is_nil(tabbar.summary { title = "✳ Claude Code" })
       assert.is_nil(tabbar.summary { title = "term://~//123:claude" })
-      assert.equals("first line", tabbar.summary {
-        title = "me@host:~/app",
-        shell_title = "me@host:~/app",
-        last_prompt = "first line\nsecond",
-      })
+      assert.equals(
+        "first line",
+        tabbar.summary {
+          title = "me@host:~/app",
+          shell_title = "me@host:~/app",
+          last_prompt = "first line\nsecond",
+        }
+      )
     end)
   end)
 
@@ -71,7 +74,7 @@ describe("tab bar", function()
       local lines = draw()
       local width = 20 - 2 -- inside the border
       assert.equals(width, vim.fn.strdisplaywidth(lines[2]))
-      assert.truthy(lines[2]:find("…$"))
+      assert.truthy(lines[2]:find "…$")
     end)
 
     it("drops blank lines first, then Claude folders, when the tabs don't fit", function()
@@ -137,7 +140,7 @@ describe("tab bar", function()
       end
       line = draw()[1]
       -- The current (last) tab shows, with ‹ for the tabs before.
-      assert.truthy(line:find("^‹ "))
+      assert.truthy(line:find "^‹ ")
       assert.truthy(line:find("▶", 1, true))
     end)
   end)

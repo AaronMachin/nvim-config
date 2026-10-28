@@ -248,7 +248,7 @@ describe("floatterm", function()
     it("force-closes a shell tab at once and asks first for a Claude tab", function()
       local shell = H.sleep_tab { label = "shell" }
       local claude = H.sleep_tab { label = "claude", kind = "claude" }
-      local prompts = H.answer_select("Keep it")
+      local prompts = H.answer_select "Keep it"
       ft.close_current()
       H.flush(100)
       assert.equals(1, #prompts)
@@ -392,11 +392,15 @@ describe("floatterm", function()
         ft.move "top"
       ]]
       H.child(project, code, { floatterm_placement_dir = dir })
-      local out = H.child(project, [[
+      local out = H.child(
+        project,
+        [[
         local ft = require "floatterm"
         ft.new_tab({ "sleep", "30" })
         io.stdout:write(vim.json.encode(ft.layout().outer))
-      ]], { floatterm_placement_dir = dir })
+      ]],
+        { floatterm_placement_dir = dir }
+      )
       local outer = vim.json.decode(out)
       assert.equals(1, outer.row) -- docked at the top
       assert.equals(math.floor(ROWS * 0.2) - 1, outer.height) -- and small

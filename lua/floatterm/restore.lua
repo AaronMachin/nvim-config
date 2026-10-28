@@ -335,9 +335,13 @@ local function save_soon()
     return
   end
   pending = vim.uv.new_timer()
-  pending:start(SAVE_DELAY, 0, vim.schedule_wrap(function()
-    pcall(M.save)
-  end))
+  pending:start(
+    SAVE_DELAY,
+    0,
+    vim.schedule_wrap(function()
+      pcall(M.save)
+    end)
+  )
 end
 
 local function name_of(tab)
@@ -388,7 +392,11 @@ local function notify(report)
     local several = #report.fresh > 1
     table.insert(
       parts,
-      join(report.fresh) .. (several and " had no conversation yet, so they started fresh" or " had no conversation yet, so it started fresh")
+      join(report.fresh)
+        .. (
+          several and " had no conversation yet, so they started fresh"
+          or " had no conversation yet, so it started fresh"
+        )
     )
   end
   if #report.failed > 0 then
@@ -403,7 +411,10 @@ local function notify(report)
   end
   local opened = report.opened .. (report.opened == 1 and " tab" or " tabs")
   local problem = #report.failed + #report.dropped > 0
-  vim.notify("floatterm: reopened " .. opened .. "; " .. table.concat(parts, "; "), problem and vim.log.levels.WARN or nil)
+  vim.notify(
+    "floatterm: reopened " .. opened .. "; " .. table.concat(parts, "; "),
+    problem and vim.log.levels.WARN or nil
+  )
 end
 
 -- The last thing a terminal printed, which says why a resume exited.
@@ -487,12 +498,16 @@ local function finish()
   done = true
   if not ticker then
     ticker = vim.uv.new_timer()
-    ticker:start(SAVE_EVERY, SAVE_EVERY, vim.schedule_wrap(function()
-      local ft = package.loaded.floatterm
-      if ft and #ft.tabs() > 0 then
-        pcall(M.save, true)
-      end
-    end))
+    ticker:start(
+      SAVE_EVERY,
+      SAVE_EVERY,
+      vim.schedule_wrap(function()
+        local ft = package.loaded.floatterm
+        if ft and #ft.tabs() > 0 then
+          pcall(M.save, true)
+        end
+      end)
+    )
   end
   pcall(M.save)
   pcall(prune)
@@ -692,7 +707,8 @@ function M.restore()
       local which = #live > 1 and (" (" .. tab_list(set, 50) .. ")") or ""
       table.insert(items, {
         set = set,
-        text = "Open the same tabs as the nvim already open here" .. which
+        text = "Open the same tabs as the nvim already open here"
+          .. which
           .. " (its Claude tabs resume the same conversations and share the same notes, so the two nvims' Claude tabs may clash: replies can interleave and either can lose its place)",
       })
     end

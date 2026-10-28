@@ -11,17 +11,20 @@ describe("dbkeys", function()
   end)
 
   it("reads .env values: quotes, comments, export and empty values", function()
-    local path = H.write(H.tmpdir "env" .. "/.env", table.concat({
-      "# a comment",
-      "APP_NAME=Laravel",
-      "DB_CONNECTION=pgsql # after the value",
-      'DB_PASSWORD="s3cret # not a comment"',
-      "DB_USERNAME='sail' # quoted, then a comment",
-      "export FORWARD_DB_PORT=5433",
-      "DB_HOST=",
-      "  SPACED  =  value  ",
-      "NOT A LINE",
-    }, "\n"))
+    local path = H.write(
+      H.tmpdir "env" .. "/.env",
+      table.concat({
+        "# a comment",
+        "APP_NAME=Laravel",
+        "DB_CONNECTION=pgsql # after the value",
+        'DB_PASSWORD="s3cret # not a comment"',
+        "DB_USERNAME='sail' # quoted, then a comment",
+        "export FORWARD_DB_PORT=5433",
+        "DB_HOST=",
+        "  SPACED  =  value  ",
+        "NOT A LINE",
+      }, "\n")
+    )
     local env = dbkeys.read_env(path)
     assert.equals("Laravel", env.APP_NAME)
     assert.equals("pgsql", env.DB_CONNECTION)
@@ -46,7 +49,10 @@ describe("dbkeys", function()
       FORWARD_DB_PORT = "5433",
     }, "/proj")
     assert.equals("postgresql://sail:p%40ss%2Fword@127.0.0.1:5433/app", url)
-    assert.equals("mysql://127.0.0.1:3306/app", dbkeys.build_url({ DB_CONNECTION = "mysql", DB_DATABASE = "app" }, "/p"))
+    assert.equals(
+      "mysql://127.0.0.1:3306/app",
+      dbkeys.build_url({ DB_CONNECTION = "mysql", DB_DATABASE = "app" }, "/p")
+    )
     assert.equals(
       "mysql://root@127.0.0.1:3306/app",
       dbkeys.build_url({ DB_CONNECTION = "mariadb", DB_USERNAME = "root", DB_DATABASE = "app" }, "/p")
@@ -59,7 +65,10 @@ describe("dbkeys", function()
     assert.is_nil(url)
     assert.truthy(reason:find("database/database.sqlite doesn't exist", 1, true))
     H.write(project .. "/database/database.sqlite", "")
-    assert.equals("sqlite:" .. project .. "/database/database.sqlite", dbkeys.build_url({ DB_CONNECTION = "sqlite" }, project))
+    assert.equals(
+      "sqlite:" .. project .. "/database/database.sqlite",
+      dbkeys.build_url({ DB_CONNECTION = "sqlite" }, project)
+    )
     assert.equals("sqlite::memory:", dbkeys.build_url({ DB_CONNECTION = "sqlite", DB_DATABASE = ":memory:" }, project))
   end)
 

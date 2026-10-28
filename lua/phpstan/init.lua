@@ -113,7 +113,7 @@ function M.run()
   end
 
   running = true
-  vim.notify("PHPStan: running in Sail, this takes a while")
+  vim.notify "PHPStan: running in Sail, this takes a while"
   vim.system(COMMAND, { cwd = root, text = true }, function(result)
     vim.schedule(function()
       finish(result, root)

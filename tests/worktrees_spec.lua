@@ -113,7 +113,7 @@ describe("worktrees", function()
     it("stashes main's changes, detaches the worktree and checks its branch out in main", function()
       local wt = add_worktree("sd-9", "SD-9")
       H.write(repo.main .. "/wip.txt", "wip\n")
-      local prompts = H.answer_select("Go ahead")
+      local prompts = H.answer_select "Go ahead"
       worktrees.switch_main(wt)
       wait_for "main is on SD%-9"
       assert.truthy(prompts[1]:find("stash 1 uncommitted file, then check out SD-9", 1, true))
@@ -138,7 +138,9 @@ describe("worktrees", function()
       local prompts = H.answer_select("Go ahead", "Yes")
       worktrees.switch_main(wt)
       wait_for "undone: "
-      assert.truthy(H.notified(messages, "checking out SD%-10 in main failed, stopped there: fatal: made to fail by the test%."))
+      assert.truthy(
+        H.notified(messages, "checking out SD%-10 in main failed, stopped there: fatal: made to fail by the test%.")
+      )
       assert.truthy(prompts[2]:find("Undo what was done?", 1, true))
       -- Back as it was: main on main with its change, the worktree on its branch.
       assert.equals("main", H.git(repo.main, { "branch", "--show-current" }))

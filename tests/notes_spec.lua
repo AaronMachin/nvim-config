@@ -163,7 +163,7 @@ describe("notes", function()
         else
           H.write(p.claude, "summary\n")
         end
-        vim.cmd("checktime")
+        vim.cmd "checktime"
         kept[case] = p.mine
         close(buf)
       end
@@ -255,7 +255,10 @@ describe("notes", function()
       local dir = notes.dir()
       vim.fn.mkdir(dir, "p")
       H.write(dir .. "/20261028-aaaa.md", "# login work\n")
-      H.write(dir .. "/20261028-aaaa.claude.json", vim.json.encode { summary = "Fixing login\nmore", hashtags = { "auth", "#deploy" } })
+      H.write(
+        dir .. "/20261028-aaaa.claude.json",
+        vim.json.encode { summary = "Fixing login\nmore", hashtags = { "auth", "#deploy" } }
+      )
       H.write(dir .. "/20261029-bbbb.md", "# docs\n")
       H.write(dir .. "/20261029-bbbb.claude.md", "# Summary of chat\nWriting docs\n#docs\n")
       vim.uv.fs_utime(dir .. "/20261028-aaaa.md", 1000, 1000)
