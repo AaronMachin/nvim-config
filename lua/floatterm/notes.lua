@@ -222,12 +222,26 @@ local function needs_you(record)
   return nil
 end
 
+-- Lines with a newline in them (a summary Claude wrote over two lines) split into one
+-- line each, as a buffer won't take them, with the highlights moved to match.
+function M.split_lines(lines, highlights)
+  local out, moved, first = {}, {}, {}
+  for i, line in ipairs(lines) do
+    first[i - 1] = #out
+    vim.list_extend(out, vim.split(line, "\n", { plain = true }))
+  end
+  for _, hl in ipairs(highlights) do
+    table.insert(moved, vim.tbl_extend("force", hl, { line = first[hl.line] or hl.line }))
+  end
+  return out, moved
+end
+
 -- Claude's part as lines and highlights at `width`, and whether there's nothing yet.
 local function claude_lines(sheet, width, record)
   local claude_notes = require "floatterm.claude_notes"
   local asking = needs_you(record)
   if sheet.data then
-    local lines, highlights = claude_notes.render(sheet.data, { width = width, needs_you = asking })
+    local lines, highlights = M.split_lines(claude_notes.render(sheet.data, { width = width, needs_you = asking }))
     return lines, highlights, false
   end
   local empty = #sheet.lines == 0
@@ -239,6 +253,45 @@ local function claude_lines(sheet, width, record)
     highlights[1] = { line = 0, col = 0, end_col = #line, group = group }
   end
   return lines, highlights, empty
+end
+
+-- Claude's part of a note as read from its files: { data } or { lines }. For the
+-- pickers (here and lua/floatterm/overview), which draw it themselves.
+function M.claude_sheet(note_id)
+  return read_sheet(note_id)
+end
+
+-- A note's Claude summary (its first line, "" without one) and hashtags (each with its
+-- #), from the .json, else from the .md: its first line that isn't a heading or tags,
+-- and its line of tags.
+function M.claude_summary(note_id)
+  local sheet = read_sheet(note_id)
+  local summary, tags = "", {}
+  if sheet.data then
+    local text = type(sheet.data.summary) == "string" and sheet.data.summary or ""
+    summary = vim.trim(vim.split(vim.trim(text), "\n", { plain = true })[1] or "")
+    for _, tag in ipairs(type(sheet.data.hashtags) == "table" and sheet.data.hashtags or {}) do
+      if type(tag) == "string" then
+        tag = vim.trim(tag):gsub("^#+", ""):gsub("%s+", "-")
+        if tag ~= "" then
+          table.insert(tags, "#" .. tag)
+        end
+      end
+    end
+    return summary, tags
+  end
+  for _, line in ipairs(sheet.lines) do
+    line = vim.trim(line)
+    -- "#auth #deploy": tags, not a heading, which has a space after its #s.
+    if #tags == 0 and line:match "^#[^#%s]" then
+      for tag in line:gmatch "#[^%s#]+" do
+        table.insert(tags, tag)
+      end
+    elseif summary == "" and line ~= "" and not line:match "^#" then
+      summary = line
+    end
+  end
+  return summary, tags
 end
 
 -- Puts lines into a buffer that isn't edited, with their highlights. The lines are only
@@ -1016,7 +1069,8 @@ local function size_text(bytes)
   return string.format("%.1f KB", bytes / 1024)
 end
 
--- Every note of yours in the folder, newest first: { id, path, title, mtime, size, tab }.
+-- Every note of yours in the folder, newest first: { id, path, title, mtime, size, tab,
+-- summary, hashtags } (summary and hashtags from Claude's part, see M.claude_summary).
 function M.list()
   local dir = M.dir()
   local found = {}
@@ -1042,6 +1096,7 @@ function M.list()
           break
         end
       end
+      local summary, hashtags = M.claude_summary(id)
       table.insert(found, {
         id = id,
         path = path,
@@ -1049,6 +1104,8 @@ function M.list()
         mtime = stat and stat.mtime.sec or 0,
         size = stat and stat.size or 0,
         tab = open[id],
+        summary = summary,
+        hashtags = hashtags,
       })
     end
   end
@@ -1078,10 +1135,68 @@ function M.pick()
     vim.notify("floatterm: no notes in " .. vim.fn.fnamemodify(folder(), ":~"), vim.log.levels.INFO)
     return
   end
+  local previewers = require "telescope.previewers"
+  local preview_utils = require "telescope.previewers.utils"
   local displayer = entry_display.create {
     separator = "  ",
-    items = { { width = 32 }, { width = 16 }, { width = 8 }, { remaining = true } },
+    items = { { width = 24 }, { width = 12 }, { width = 7 }, { width = 14 }, { remaining = true } },
   }
+  -- Tags after the summary, in their own colour. The last column isn't padded, so they
+  -- sit at the very end of the row.
+  local function display(entry)
+    local note = entry.value
+    local tags = table.concat(note.hashtags, " ")
+    local last = note.summary ~= "" and tags ~= "" and (note.summary .. "  " .. tags) or (note.summary .. tags)
+    local text, highlights = displayer {
+      note.title,
+      { os.date("%d %b %H:%M", note.mtime), "Comment" },
+      { size_text(note.size), "Comment" },
+      note.tab and { "● " .. note.tab, "FloatTermWorking" } or "",
+      last,
+    }
+    if tags ~= "" then
+      highlights = highlights or {}
+      table.insert(highlights, { { #text - #tags, #text }, "Special" })
+    end
+    return text, highlights
+  end
+
+  -- Claude's part on top as the pane draws it, at the preview's width, then yours.
+  local preview_ns = api.nvim_create_namespace "floatterm_notes_picker"
+  local function preview(self, entry)
+    local note, buf, win = entry.value, self.state.bufnr, self.state.winid
+    local width = win and api.nvim_win_is_valid(win) and api.nvim_win_get_width(win) or 60
+    local record = nil
+    for _, tab in ipairs(floatterm().tabs()) do
+      if tab.note_id == note.id then
+        record = tab
+        break
+      end
+    end
+    local sheet = read_sheet(note.id)
+    local lines, highlights = {}, {}
+    if sheet.data or #sheet.lines > 0 then
+      lines, highlights = claude_lines(sheet, width, record)
+      vim.list_extend(lines, { "", "── yours " .. string.rep("─", math.max(0, width - 9)) })
+      table.insert(highlights, { line = #lines - 1, col = 0, end_col = #lines[#lines], group = "Comment" })
+    end
+    vim.list_extend(lines, read_lines(note.path) or {})
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    preview_utils.highlighter(buf, "markdown")
+    api.nvim_buf_clear_namespace(buf, preview_ns, 0, -1)
+    for _, hl in ipairs(highlights) do
+      pcall(api.nvim_buf_set_extmark, buf, preview_ns, hl.line, hl.col, {
+        end_col = hl.end_col,
+        hl_group = hl.group,
+        priority = 200,
+      })
+    end
+    if win and api.nvim_win_is_valid(win) then
+      vim.wo[win].wrap = true
+      vim.wo[win].linebreak = true
+    end
+  end
+
   pickers
     .new({}, {
       prompt_title = "Notes",
@@ -1091,20 +1206,17 @@ function M.pick()
           return {
             value = note,
             path = note.path,
-            ordinal = note.title .. " " .. note.id,
-            display = function()
-              return displayer {
-                note.title,
-                { os.date("%Y-%m-%d %H:%M", note.mtime), "Comment" },
-                { size_text(note.size), "Comment" },
-                note.tab and { "● open in " .. note.tab, "FloatTermWorking" } or "",
-              }
-            end,
+            -- Typing matches the summary and tags too, so "#deploy" finds a tagged note.
+            ordinal = table.concat({ note.title, note.summary, table.concat(note.hashtags, " "), note.id }, " "),
+            display = display,
           }
         end,
       },
       sorter = conf.generic_sorter {},
-      previewer = conf.file_previewer {},
+      previewer = previewers.new_buffer_previewer {
+        title = "Notes",
+        define_preview = preview,
+      },
       attach_mappings = function(prompt_buf, map)
         actions.select_default:replace(function()
           local entry = action_state.get_selected_entry()
