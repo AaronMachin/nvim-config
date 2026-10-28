@@ -31,8 +31,6 @@ local api = vim.api
 local settings = require "floatterm.settings"
 
 local CLAUDE_EMPTY = "Claude's notes appear after its next turn"
--- Claude's part takes up to this share of the pane's height, less when it's short.
-local CLAUDE_SHARE = 0.4
 local SIDES = {
   { "<C-S-h>", "<C-S-Left>", "left" },
   { "<C-S-l>", "<C-S-Right>", "right" },
@@ -318,7 +316,9 @@ local function draw(record, box, overlay)
   if show_claude then
     local cbuf = claude_buf(record.note_id)
     -- Yours keeps at least one line.
-    local room = math.max(1, math.min(math.floor(box.height * CLAUDE_SHARE) - 2, box.height - 5))
+    -- Claude's part takes up to the claude_notes_share setting of the pane, less when
+    -- it's short.
+    local room = math.max(1, math.min(math.floor(box.height * settings.get "claude_notes_share") - 2, box.height - 5))
     local config = {
       relative = "editor",
       row = box.row,

@@ -29,6 +29,8 @@ M.defaults = {
   -- (lua/floatterm/claude_notes), and the model that does it: "haiku" or "sonnet".
   claude_notes = true,
   claude_notes_model = "haiku",
+  -- The most of the notes pane's height Claude's part takes (less when it's short).
+  claude_notes_share = 0.65,
 }
 
 local values = nil

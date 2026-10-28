@@ -63,6 +63,11 @@ local ROWS = {
     note = "kept up to date after each turn",
   },
   { key = "claude_notes_model", label = "Claude's notes model", choices = { { "haiku", "haiku" }, { "sonnet", "sonnet" } } },
+  {
+    key = "claude_notes_share",
+    label = "Claude's share",
+    number = { min = 30, max = 80, step = 5, percent = true },
+  },
 }
 
 local page = nil
