@@ -3,7 +3,10 @@
 -- A row is the tab's state as the tab bar shows it, its name, its folder (the
 -- worktree's, when it's in one) and from its Claude notes the title and what Claude is
 -- doing now (older notes without them: the summary's first line). Tabs that need you
--- come first, then working, then done, then by name. The preview is the tab's Claude
+-- come first, then working, then done, then by name. A tab under a parent
+-- (lua/floatterm/groups) is listed indented under it, and a parent with its children
+-- sorts by the most urgent of them; a group heading is listed as the parent of its
+-- Claude tabs. The preview is the tab's Claude
 -- notes drawn as the notes pane draws them, at the preview's width, with what it's
 -- asking in the header while it waits. Enter shows the tab; Ctrl+o opens its PR in the
 -- browser: the first link whose title or URL looks like a pull request, else the first
@@ -117,11 +120,25 @@ local function first_pr(sheet)
   return links[1] and links[1].url
 end
 
--- Every Claude tab, in the order the picker lists them.
+local function rank(record)
+  return ORDER[record.status] or 4
+end
+
+-- Every Claude tab, in the order the picker lists them: each item { record, name,
+-- folder, summary, depth }.
 function M.list()
+  local groups = require "floatterm.groups"
   local items = {}
+  local by_record = {}
   for _, record in ipairs(floatterm().tabs()) do
-    if record.kind == "claude" then
+    -- A group heading is listed when a Claude tab is somewhere under it.
+    local listed = record.kind == "claude"
+    if record.kind == "group" then
+      for _, other in ipairs(floatterm().tabs()) do
+        listed = listed or (other.kind == "claude" and groups.is_under(other, record))
+      end
+    end
+    if listed then
       local summary = ""
       if record.note_id then
         local first, _, claude = require("floatterm.notes").claude_summary(record.note_id)
@@ -130,22 +147,63 @@ function M.list()
         end, { claude.title, claude.now })
         summary = #parts > 0 and table.concat(parts, " · ") or first
       end
-      table.insert(items, {
+      local item = {
         record = record,
         name = floatterm().name(record),
         folder = folder_of(record.cwd),
         summary = summary,
-      })
+        children = {},
+      }
+      by_record[record] = item
+      table.insert(items, item)
     end
   end
-  table.sort(items, function(a, b)
-    local ra, rb = ORDER[a.record.status] or 4, ORDER[b.record.status] or 4
-    if ra ~= rb then
-      return ra < rb
+  -- Under the nearest listed ancestor; the rest are top-level.
+  local tops = {}
+  for _, item in ipairs(items) do
+    local parent = groups.parent(item.record)
+    local seen = 0
+    while parent and not by_record[parent] and seen < 100 do
+      parent = groups.parent(parent)
+      seen = seen + 1
+    end
+    if parent and by_record[parent] then
+      table.insert(by_record[parent].children, item)
+    else
+      table.insert(tops, item)
+    end
+  end
+  -- A parent counts as urgent as the most urgent tab under it (a group heading has no
+  -- state of its own).
+  local function urgency(item)
+    local best = item.record.kind == "group" and 5 or rank(item.record)
+    for _, child in ipairs(item.children) do
+      best = math.min(best, urgency(child))
+    end
+    item.urgency = best
+    return best
+  end
+  local function by_urgency(a, b)
+    if a.urgency ~= b.urgency then
+      return a.urgency < b.urgency
     end
     return a.name:lower() < b.name:lower()
-  end)
-  return items
+  end
+  local ordered = {}
+  local function add(list, depth)
+    for _, item in ipairs(list) do
+      urgency(item)
+    end
+    table.sort(list, by_urgency)
+    for _, item in ipairs(list) do
+      item.depth = depth
+      table.insert(ordered, item)
+      add(item.children, depth + 1)
+      item.children = nil
+    end
+  end
+  add(tops, 0)
+  return ordered
 end
 
 -- The preview's lines and highlights at `width`: its notes drawn as the notes pane
@@ -154,6 +212,15 @@ end
 function M.preview_lines(item, width)
   local claude_notes = require "floatterm.claude_notes"
   local record = item.record
+  if record.kind == "group" then
+    -- Only its workstreams to show.
+    local related = require("floatterm.groups").dossier_opts(record)
+    local lines, highlights = claude_notes.render(
+      { title = item.name },
+      { width = width, workstreams = related.workstreams }
+    )
+    return lines, highlights
+  end
   local sheet = sheet_of(record)
   if sheet and sheet.data then
     return require("floatterm.notes").claude_preview(record.note_id, width, record)
@@ -203,7 +270,7 @@ function M.pick()
   local state_width, name_width, folder_width = 0, 4, 6
   for _, item in ipairs(items) do
     state_width = math.max(state_width, vim.fn.strdisplaywidth((state_text(item.record))))
-    name_width = math.max(name_width, vim.fn.strdisplaywidth(item.name))
+    name_width = math.max(name_width, vim.fn.strdisplaywidth(item.name) + 2 * item.depth)
     folder_width = math.max(folder_width, vim.fn.strdisplaywidth(item.folder))
   end
   local displayer = entry_display.create {
@@ -249,9 +316,13 @@ function M.pick()
             ordinal = table.concat({ item.name, item.folder, item.summary, item.record.status or "" }, " "),
             display = function()
               local text, hl = state_text(item.record)
+              -- A group heading has no state of its own.
+              if item.record.kind == "group" then
+                text, hl = "▾ group", "FloatTermGroup"
+              end
               return displayer {
                 { text, hl },
-                item.name,
+                string.rep("  ", item.depth - 1) .. (item.depth > 0 and "└ " or "") .. item.name,
                 { item.folder, "Comment" },
                 item.summary,
               }

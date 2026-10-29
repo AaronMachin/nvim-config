@@ -29,7 +29,8 @@
 -- Going into yours puts the cursor on an empty line at the end, typing. Claude's part
 -- shows what fits, and its title says how many lines don't; Ctrl+Shift+o in yours
 -- shows all of it in a large float to scroll and copy from, where Tab moves between
--- its links and folds and Enter opens or toggles them.
+-- its links, folds and related tabs (WORKSTREAMS, "part of") and Enter opens, toggles
+-- or shows them.
 --
 -- Captures go at the end of yours: Y on a selection in a terminal tab, <leader>o y on
 -- a selection in code, <leader>o a for a one-line note. Another nvim may have saved the
@@ -284,6 +285,8 @@ function M.set_fold(note_id, name, open)
   end
 end
 
+local current_sheet
+
 -- Claude's part as lines, highlights and what can be acted on (links and folds) at
 -- `width`, for the tab `record` (nil for a note no tab has), and whether there's
 -- nothing yet.
@@ -291,11 +294,19 @@ local function claude_lines(sheet, width, record, note_id)
   local claude_notes = require "floatterm.claude_notes"
   local asking = needs_you(record)
   if sheet.data then
+    -- The tab's parent and children (lua/floatterm/groups), the children's notes read
+    -- as the pane reads its own: again only when they changed.
+    local ok, related = pcall(function()
+      return require("floatterm.groups").dossier_opts(record, current_sheet)
+    end)
+    related = ok and related or {}
     local lines, highlights, targets = claude_notes.render(sheet.data, {
       width = width,
       status = record and record.status,
       needs_you = asking,
       open = M.folds(note_id or (record and record.note_id)),
+      part_of = related.part_of,
+      workstreams = related.workstreams,
     })
     return lines, highlights, false, targets
   end
@@ -392,7 +403,7 @@ local function load_claude(note_id)
 end
 
 -- Claude's part as on disk now, read again only when its files changed since.
-local function current_sheet(note_id)
+current_sheet = function(note_id)
   if not claude_sheets[note_id] or claude_stamps[note_id] ~= claude_stamp(note_id) then
     load_claude(note_id)
   end
@@ -1017,7 +1028,9 @@ function M.read_claude()
       })
     end
     local footer = keys
-    if target and target.kind == "link" then
+    if target and target.kind == "tab" then
+      footer = " Enter shows " .. target.title .. " "
+    elseif target and target.kind == "link" then
       local url = target.url
       if vim.fn.strdisplaywidth(url) > width - 4 then
         url = vim.fn.strcharpart(url, 0, width - 5) .. "…"
@@ -1058,6 +1071,14 @@ function M.read_claude()
       return
     elseif target.kind == "fold" then
       toggle(target.name)
+    elseif target.kind == "tab" then
+      -- A workstream or the parent: that tab, typing in it.
+      if api.nvim_win_is_valid(win) then
+        api.nvim_win_close(win, true)
+      end
+      if not require("floatterm.groups").focus_uid(target.uid) then
+        vim.notify("floatterm: that tab has closed", vim.log.levels.INFO)
+      end
     elseif target.url:match "^https?://" then
       vim.ui.open(target.url)
     end
@@ -1703,13 +1724,20 @@ function M.setup()
         -- The status and what Claude asks only matter to the tab whose notes show (the
         -- needs-you line), and are drawn now rather than at the next summary.
         local relevant = false
+        -- The parent's dossier lists its children's state, and a child's names its parent.
+        local shown = pane.buf and ft and ft.record(pane.buf)
+        local changed = ft and ft.record(args.data.buf)
+        local related = shown
+          and changed
+          and (changed.parent_uid == shown.uid or (shown.parent_uid ~= nil and shown.parent_uid == changed.uid))
         for _, field in ipairs(args.data.fields or {}) do
           relevant = relevant
             or field == "notes_on"
             or field == "note_id"
             or field == "kind"
             or field == "label"
-            or ((field == "status" or field == "needs_you_message") and args.data.buf == pane.buf)
+            or field == "parent_uid"
+            or ((field == "status" or field == "needs_you_message") and (args.data.buf == pane.buf or related))
         end
         if not relevant then
           return

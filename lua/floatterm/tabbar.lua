@@ -5,6 +5,10 @@
 -- can't be focused until Ctrl+Shift+b moves the cursor into it, and it closes with
 -- the float.
 --
+-- Tabs under a parent (lua/floatterm/groups) are drawn under it: down the left with
+-- ├ and └, along the top right after it with └. A parent with its children folded
+-- away (za) shows how many with ▸. A group heading is one line, ▾ and its name.
+--
 -- A Claude tab shows its state first, then what it's working on, then its folder;
 -- when space runs out the folder goes first, then the summary, never the state. A
 -- shell tab shows its folder and what's running in it.
@@ -25,11 +29,13 @@ local SEPARATOR = " │ "
 
 local bar_win = nil
 local bar_buf = nil
--- Per tab, in tab order, where it was drawn: { buf, first, last } (0-based lines) and,
+-- The rows drawn (lua/floatterm/groups M.rows: the tabs not folded away), and per
+-- row, where it was drawn: { buf, first, last } (0-based lines) and,
 -- along the top, { start_col, end_col } as byte columns and { start_cell, end_cell }
 -- as screen columns.
 local entries = {}
--- The tab the cursor is on while it's in the bar.
+local rows_drawn = {}
+-- The row the cursor is on while it's in the bar.
 local selected = nil
 local timer = nil
 local busy = false
@@ -57,6 +63,8 @@ local function set_highlights()
   api.nvim_set_hl(0, "FloatTermDone", { link = "LineNr", default = true })
   api.nvim_set_hl(0, "FloatTermCurrent", { bold = true, default = true })
   api.nvim_set_hl(0, "FloatTermSelected", { link = "Visual", default = true })
+  api.nvim_set_hl(0, "FloatTermGroup", { link = "Title", default = true })
+  api.nvim_set_hl(0, "FloatTermTree", { link = "FloatBorder", default = true })
 end
 set_highlights()
 
@@ -173,9 +181,12 @@ end
 
 -- Down the left side: a few lines per tab. Levels drop, in turn, the blank line
 -- between tabs, a Claude tab's folder, then its summary and a shell's command.
-local function vertical_tab(record, level)
+local function vertical_tab(record, level, row)
   local lines = {}
-  if record.kind == "claude" then
+  if record.kind == "group" then
+    local name = require("floatterm").name(record)
+    lines = { { { (row.folded and "▸ " or "▾ ") .. name, "FloatTermGroup" } } }
+  elseif record.kind == "claude" then
     local text, hl = state_text(record)
     table.insert(lines, { { text, hl } })
     local summary = M.summary(record)
@@ -196,17 +207,39 @@ local function vertical_tab(record, level)
   if record.notes_on then
     table.insert(lines[1], { " ✎", nil })
   end
+  if row.folded and record.kind ~= "group" then
+    table.insert(lines[1], { " ▸" .. row.folded, "FloatTermWorking" })
+  elseif row.folded then
+    table.insert(lines[1], { " · " .. row.folded, "FloatTermWorking" })
+  end
   return lines
 end
 
-local function render_vertical(tabs, current, height, width)
+-- The tree's lines before a row's first line and before the rest.
+local function tree_prefix(row)
+  if row.depth == 0 then
+    return "", ""
+  end
+  local rails = ""
+  for level = 1, row.depth - 1 do
+    rails = rails .. (row.rails[level] and "│ " or "  ")
+  end
+  return rails .. (row.last and "└ " or "├ "), rails .. (row.last and "  " or "│ ")
+end
+
+local function render_vertical(rows, current, height, width)
   local level, all
+  local roots = 0
+  for _, row in ipairs(rows) do
+    roots = roots + (row.depth == 0 and 1 or 0)
+  end
   for try = 0, 3 do
     level, all = try, {}
-    for _, record in ipairs(tabs) do
-      table.insert(all, vertical_tab(record, level))
+    for _, row in ipairs(rows) do
+      table.insert(all, vertical_tab(row.record, level, row))
     end
-    local count = (level == 0) and (#tabs - 1) or 0
+    -- Blank lines go between the trees, not inside one.
+    local count = (level == 0) and (roots - 1) or 0
     for _, lines in ipairs(all) do
       count = count + #lines
     end
@@ -215,25 +248,32 @@ local function render_vertical(tabs, current, height, width)
     end
   end
 
-  local rows, spans = {}, {}
+  local out, spans = {}, {}
   for i, lines in ipairs(all) do
-    if level == 0 and i > 1 then
-      table.insert(rows, {})
+    if level == 0 and i > 1 and rows[i].depth == 0 then
+      table.insert(out, {})
     end
-    local first = #rows
+    local first = #out
+    local head, rest = tree_prefix(rows[i])
     for n, line in ipairs(lines) do
       local marker = (n == 1 and i == current) and "▶ " or "  "
-      table.insert(rows, truncate(vim.list_extend({ { marker, nil } }, line), width))
+      local chunks = { { marker, nil } }
+      if head ~= "" then
+        table.insert(chunks, { n == 1 and head or rest, "FloatTermTree" })
+      end
+      table.insert(out, truncate(vim.list_extend(chunks, line), width))
     end
-    spans[i] = { first = first, last = #rows - 1 }
+    spans[i] = { first = first, last = #out - 1 }
   end
-  return rows, spans
+  return out, spans
 end
 
 -- Along the top: one segment per tab on one line.
-local function horizontal_tab(record, level, cap)
+local function horizontal_tab(record, level, cap, row)
   local parts = {}
-  if record.kind == "claude" then
+  if record.kind == "group" then
+    table.insert(parts, { (row.folded and "▸ " or "▾ ") .. require("floatterm").name(record), "FloatTermGroup" })
+  elseif record.kind == "claude" then
     local text, hl = state_text(record)
     table.insert(parts, { text, hl })
     local summary = M.summary(record)
@@ -267,11 +307,18 @@ local function horizontal_tab(record, level, cap)
   if record.notes_on then
     table.insert(chunks, 2, { " ✎", nil })
   end
+  if row.folded then
+    table.insert(chunks, 2, { (record.kind == "group" and " · " or " ▸") .. row.folded, "FloatTermWorking" })
+  end
+  -- A child follows its parent, marked as one.
+  if row.depth > 0 then
+    table.insert(chunks, 1, { "└ ", "FloatTermTree" })
+  end
   return chunks
 end
 
 -- `shown` is the tab that must stay in view: the cursor's when it's in the bar.
-local function render_horizontal(tabs, current, width, shown)
+local function render_horizontal(rows, current, width, shown)
   -- Level 0 is everything; 1 drops Claude folders; 2 shortens summaries and commands
   -- step by step; 3 drops them.
   local tries = { { 0 }, { 1 }, { 2, 40 }, { 2, 28 }, { 2, 18 }, { 2, 10 }, { 3 } }
@@ -279,8 +326,8 @@ local function render_horizontal(tabs, current, width, shown)
   for _, try in ipairs(tries) do
     segments = {}
     local total = 0
-    for i, record in ipairs(tabs) do
-      local chunks = horizontal_tab(record, try[1], try[2])
+    for i, row in ipairs(rows) do
+      local chunks = horizontal_tab(row.record, try[1], try[2], row)
       table.insert(chunks, 1, { i == current and "▶ " or "", nil })
       segments[i] = chunks
       total = total + chunks_width(chunks) + (i > 1 and vim.fn.strdisplaywidth(SEPARATOR) or 0)
@@ -395,22 +442,20 @@ function M.redraw()
     return
   end
 
-  local current = 1
-  for i, record in ipairs(tabs) do
-    if record.buf == floatterm.current_buf() then
-      current = i
-    end
-  end
+  local groups = require "floatterm.groups"
+  rows_drawn = groups.rows()
+  -- A tab folded away marks its parent's row.
+  local current = groups.row_of(rows_drawn, floatterm.record(floatterm.current_buf() or -1)) or 1
 
   local config = window_config(box)
   local rows
   if is_horizontal() then
-    rows, entries = render_horizontal(tabs, current, config.width, math.min(selected or current, #tabs))
+    rows, entries = render_horizontal(rows_drawn, current, config.width, math.min(selected or current, #rows_drawn))
   else
-    rows, entries = render_vertical(tabs, current, config.height, config.width)
+    rows, entries = render_vertical(rows_drawn, current, config.height, config.width)
   end
   if selected then
-    selected = math.min(selected, #tabs)
+    selected = math.min(selected, #rows_drawn)
   end
 
   if not (bar_buf and api.nvim_buf_is_valid(bar_buf)) then
@@ -535,12 +580,22 @@ local function tab_at_cell(cell)
 end
 
 local function selected_record()
-  local tabs = require("floatterm").tabs()
-  return selected and tabs[selected] or nil
+  local row = selected and rows_drawn[selected]
+  return row and row.record or nil
+end
+
+-- Selects the row `record` is drawn on.
+local function select_record(record)
+  M.redraw()
+  local i = require("floatterm.groups").row_of(rows_drawn, record)
+  if i then
+    selected = i
+    M.redraw()
+  end
 end
 
 local function select(delta)
-  local count = #require("floatterm").tabs()
+  local count = #rows_drawn
   if count == 0 then
     return
   end
@@ -626,20 +681,36 @@ function M.map_bar_keys(buf)
     select(-1)
   end, "tab bar previous tab")
   map("<CR>", open_selected, "tab bar open tab")
-  -- Capitals move the selected tab itself along, and the selection with it.
+  -- Capitals move the selected tab itself along (with its children, among its
+  -- siblings), and the selection with it.
   for lhs, delta in pairs { K = -1, H = -1, J = 1, L = 1 } do
     map(lhs, function()
-      local floatterm = require "floatterm"
-      local record = selected and floatterm.tabs()[selected]
+      local record = selected_record()
       if record then
-        floatterm.move_tab(record.buf, delta)
-        select(delta)
+        require("floatterm").move_tab(record.buf, delta)
+        select_record(record)
       end
     end, "tab bar move tab " .. (delta < 0 and "earlier" or "later"))
   end
+  -- g puts the tab under another (or under none); za folds a parent's children. g
+  -- doesn't wait for a second key, so gg isn't the top here (k or 1 is).
+  map("g", function()
+    local record = selected_record()
+    if record then
+      require("floatterm.groups").pick_parent(record.buf)
+    end
+  end, "tab bar put this tab under another")
+  map("za", function()
+    local record = selected_record()
+    local folded = record and require("floatterm.groups").toggle_fold(record.buf)
+    if folded then
+      select_record(folded)
+    end
+  end, "tab bar fold or unfold this tab's children")
   for n = 1, 9 do
     map(tostring(n), function()
-      local record = require("floatterm").tabs()[n]
+      local row = rows_drawn[n]
+      local record = row and row.record
       if record then
         leave()
         require("floatterm").focus_buf(record.buf)
@@ -694,11 +765,7 @@ function M.enter()
     return
   end
   local floatterm = require "floatterm"
-  for i, record in ipairs(floatterm.tabs()) do
-    if record.buf == floatterm.current_buf() then
-      selected = i
-    end
-  end
+  selected = require("floatterm.groups").row_of(rows_drawn, floatterm.record(floatterm.current_buf() or -1)) or 1
   api.nvim_win_set_config(bar_win, { focusable = true })
   api.nvim_set_current_win(bar_win)
   M.redraw()
@@ -767,7 +834,10 @@ local function on_click()
   if not i then
     return ""
   end
-  local record = floatterm.tabs()[i]
+  local record = rows_drawn[i] and rows_drawn[i].record
+  if not record then
+    return ""
+  end
   vim.schedule(function()
     floatterm.focus_buf(record.buf)
   end)
@@ -966,6 +1036,7 @@ function M.setup()
     return
   end
   set_up = true
+  require("floatterm.groups").setup()
 
   local group = api.nvim_create_augroup("floatterm_tabbar", { clear = true })
   local keys_added = false

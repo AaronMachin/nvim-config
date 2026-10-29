@@ -38,6 +38,32 @@ describe("Claude overview", function()
     assert.same({ "gamma", "zeta", "alpha", "beta", "new" }, names)
   end)
 
+  it("lists children indented under their parent, parents by their most urgent child", function()
+    local groups = require "floatterm.groups"
+    local lead = claude_tab("lead", { status = "done" })
+    local a = claude_tab("zz-child", { status = "working" })
+    local b = claude_tab("aa-child", { status = "needs_you" })
+    claude_tab("solo", { status = "working" })
+    -- A group heading with a Claude tab under it, and a shell tab that's left out.
+    local c = claude_tab("grouped", { status = "done" })
+    local shell = H.sleep_tab { label = "shell" }
+    groups.set_parent(a, lead)
+    groups.set_parent(b, lead)
+    local heading = ft.new_group { label = "epic" }
+    groups.set_parent(c, heading)
+    groups.set_parent(shell, heading)
+    local rows = vim.tbl_map(function(item)
+      return item.name .. ":" .. item.depth
+    end, overview.list())
+    -- lead sorts first (a child needs you), its children by state; the group heading
+    -- has no state of its own, so it goes by its child (done) and then by name.
+    assert.same({ "lead:0", "aa-child:1", "zz-child:1", "solo:0", "epic:0", "grouped:1" }, rows)
+    -- A group's preview is its workstreams.
+    local item = overview.list()[5]
+    local lines = overview.preview_lines(item, 50)
+    assert.truthy(table.concat(lines, "\n"):find("✓ grouped", 1, true))
+  end)
+
   it("names the worktree a tab is in, and its notes' title and what Claude is doing", function()
     local repo = H.repo()
     local sub = repo.main .. "/app/Http"
@@ -66,18 +92,18 @@ describe("Claude overview", function()
       }
     )
     local lines, highlights = overview.preview_lines(overview.list()[1], 50)
-    assert.equals(" ✳ SD-1 · Deploying", lines[1])
-    assert.truthy(lines[2]:find "^ ● Allow Bash%? +▕")
+    assert.equals("  SD-1  Deploying", lines[1])
+    assert.truthy(lines[2]:find "^  ● needs you  Allow Bash%? +█")
     assert.equals(50, vim.fn.strdisplaywidth(lines[2]))
-    assert.truthy(vim.tbl_contains(lines, "  PR #7 o/r  Opened"))
+    assert.truthy(vim.tbl_contains(lines, "  \u{f407} PR #7 o/r  Opened"))
     local groups = {}
     for _, hl in ipairs(highlights) do
       if hl.line == 1 then
         groups[hl.group] = true
       end
     end
-    assert.is_true(groups.FloatTermNeedsYou)
-    assert.is_true(groups.DiagnosticInfo)
+    assert.is_true(groups.FloatTermNotesStateNeedsYou)
+    assert.is_true(groups.FloatTermNotesBarWarn)
   end)
 
   it("previews an old-format sheet with what Claude is asking on top", function()

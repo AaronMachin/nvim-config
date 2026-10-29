@@ -31,6 +31,8 @@
 --   starts a fresh `claude` in its folder instead.
 --   Shell tabs are fresh shells in the same folder. What last ran in one is kept on
 --   the record as last_command, but never run again.
+--   Every tab keeps its uid and parent (lua/floatterm/groups); group headings come
+--   back as headings. A child whose parent didn't come back loses the link quietly.
 -- A Claude tab that can't be reopened (its folder is gone, or its resume exits
 -- straight away) is kept in the set and tried once more next time.
 --
@@ -406,8 +408,16 @@ local function snapshot()
       label = record.label,
       note_id = record.note_id,
       notes_on = record.notes_on,
+      -- Where it sits among the tabs (lua/floatterm/groups).
+      uid = record.uid,
+      parent_uid = record.parent_uid,
+      children_folded = record.children_folded,
+      workstream_slug = record.workstream_slug,
+      workstream_asked = record.workstream_asked,
     }
-    if record.kind == "claude" then
+    if record.kind == "group" then
+      tab.notes_on, tab.note_id = nil, nil
+    elseif record.kind == "claude" then
       tab.session_id = record.session_id
       tab.transcript_path = record.transcript_path
       tab.start_ref = record.start_ref
@@ -573,16 +583,36 @@ local function last_line(buf)
   return nil
 end
 
+-- The fields every reopened tab keeps, for floatterm.update.
+local function placed(tab)
+  return {
+    uid = tab.uid or nil,
+    parent_uid = tab.parent_uid or vim.NIL,
+    children_folded = tab.children_folded or vim.NIL,
+    workstream_slug = tab.workstream_slug or vim.NIL,
+    workstream_asked = tab.workstream_asked or vim.NIL,
+  }
+end
+
 local function reopen(tab, report)
   local floatterm = require "floatterm"
+  if tab.kind == "group" then
+    -- Gone again once restoring is over if none of its children came back.
+    local buf = floatterm.new_group { label = tab.label, cwd = tab.cwd, uid = tab.uid }
+    floatterm.update(buf, placed(tab))
+    return false
+  end
   if tab.kind ~= "claude" then
     local cwd = tab.cwd and vim.fn.isdirectory(tab.cwd) == 1 and tab.cwd or folder
     local _, buf = floatterm.new_tab(nil, { cwd = cwd, label = tab.label, show = false })
-    floatterm.update(buf, {
-      last_command = tab.last_command or vim.NIL,
-      note_id = tab.note_id or vim.NIL,
-      notes_on = tab.notes_on or vim.NIL,
-    })
+    floatterm.update(
+      buf,
+      vim.tbl_extend("force", placed(tab), {
+        last_command = tab.last_command or vim.NIL,
+        note_id = tab.note_id or vim.NIL,
+        notes_on = tab.notes_on or vim.NIL,
+      })
+    )
     report.opened = report.opened + 1
     return false
   end
@@ -596,7 +626,10 @@ local function reopen(tab, report)
   -- Claude tab.
   if not (tab.session_id and has_transcript(tab)) then
     local fresh = require("agent").open(tab.cwd, { label = tab.label, show = false })
-    floatterm.update(fresh, { note_id = tab.note_id or vim.NIL, notes_on = tab.notes_on or vim.NIL })
+    floatterm.update(
+      fresh,
+      vim.tbl_extend("force", placed(tab), { note_id = tab.note_id or vim.NIL, notes_on = tab.notes_on or vim.NIL })
+    )
     report.opened = report.opened + 1
     table.insert(report.fresh, name_of(tab))
     return false
@@ -614,6 +647,11 @@ local function reopen(tab, report)
     show = false,
   })
   floatterm.update(buf, {
+    uid = tab.uid or nil,
+    parent_uid = tab.parent_uid or vim.NIL,
+    children_folded = tab.children_folded or vim.NIL,
+    workstream_slug = tab.workstream_slug or vim.NIL,
+    workstream_asked = tab.workstream_asked or vim.NIL,
     note_id = tab.note_id or vim.NIL,
     notes_on = tab.notes_on or vim.NIL,
     title = tab.title or vim.NIL,
@@ -688,6 +726,10 @@ local function open_set(set, copy)
     end
   end
 
+  -- Children whose parent didn't come back lose the link, and empty groups go.
+  pcall(function()
+    require("floatterm.groups").tidy()
+  end)
   finish()
   if resumed then
     vim.defer_fn(function()
@@ -714,7 +756,7 @@ end
 local function tab_list(set, width)
   local names = {}
   for _, tab in ipairs(set.tabs) do
-    if type(tab) == "table" then
+    if type(tab) == "table" and tab.kind ~= "group" then
       table.insert(names, (tab.kind == "claude" and "✳ " or "$ ") .. name_of(tab))
     end
   end

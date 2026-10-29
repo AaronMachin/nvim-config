@@ -70,26 +70,50 @@ describe("Claude's notes", function()
       return at and vim.fn.strdisplaywidth(line:sub(1, at - 1)) or nil
     end
 
+    -- The groups highlighting the text `text` on `row` (0-based), and the text each
+    -- highlight covers there.
+    local function groups_on(lines, highlights, row)
+      local out = {}
+      for _, hl in ipairs(highlights) do
+        if hl.line == row then
+          table.insert(out, { lines[row + 1]:sub(hl.col + 1, hl.end_col), hl.group })
+        end
+      end
+      return out
+    end
+    local function group_of(lines, highlights, row, text)
+      for _, pair in ipairs(groups_on(lines, highlights, row)) do
+        if pair[1] == text then
+          return pair[2]
+        end
+      end
+    end
+
+    local PR, TICKET, BLOCKED = "\u{f407}", "\u{f145}", "\u{f05e}"
+
     it("draws the dossier at 80 columns", function()
       local lines = cn.render(dossier(), { width = 80, status = "working" })
+      local rule = function(label)
+        return label .. " " .. string.rep("─", 80 - 2 - vim.fn.strdisplaywidth(label))
+      end
       assert.same({
-        " ✳ SD-494 · Console partner sign-in",
-        " ◌ working · Task 1: schema, model and factory               ▕████▊░░░░░░░░▏ 37%",
-        " #identity #cognito #signin #runbook",
+        "  SD-494  Console partner sign-in",
+        "  ◌ working  Task 1: schema, model and factory             ████▊         37% 1/4",
+        "  #identity   #cognito   #signin   #runbook ",
         "",
-        " LINKS",
-        "  SD-494 · this session's ticket  In development",
-        "  SD-540 · console sign-in        Created",
-        "  PR #231 cloud/console           Opened",
-        "  PR #228 cloud/idp-api           Reviewing",
+        " " .. rule "\u{f0c1} Links",
+        "  " .. TICKET .. " SD-494 · this session's ticket  In development",
+        "  " .. TICKET .. " SD-540 · console sign-in        Created",
+        "  " .. PR .. " PR #231 cloud/console           Opened",
+        "  " .. PR .. " PR #228 cloud/idp-api           Reviewing",
         "",
-        " PLAN",
+        " " .. rule "\u{f0ae} Plan",
         "  ✓ Design spec approved",
-        "  ▸ Task 1: schema, model and factory  Sonnet implementing",
+        "  ▶ Task 1: schema, model and factory  Sonnet implementing",
         "  · Tasks 2–13",
-        "  ! Confirm COGNITO_ACCOUNTS spelling  blocked: not settled",
+        "  " .. BLOCKED .. " Confirm COGNITO_ACCOUNTS spelling  blocked: not settled",
         "",
-        " ▸ Decisions (6) d   ▸ Details (5) t",
+        "  ▸ Decisions 6  d    ▸ Details 5  t ",
       }, lines)
     end)
 
@@ -98,13 +122,12 @@ describe("Claude's notes", function()
         local lines = cn.render(dossier(), { width = width, status = "working" })
         for _, line in ipairs(lines) do
           assert.is_true(vim.fn.strdisplaywidth(line) <= width, line)
-          assert.is_nil(line:find "%s$", "trailing space: " .. line)
         end
-        assert.equals(" ✳ SD-494 · Console partner sign-in", lines[1])
-        assert.truthy(lines[2]:find "^ ◌ working · ")
-        assert.truthy(lines[2]:find "▏ 37%%$")
+        assert.equals("  SD-494  Console partner sign-in", lines[1])
+        assert.truthy(lines[2]:find "^  ◌ working  ")
+        assert.truthy(lines[2]:find " 37%% 1/4$")
         assert.equals(width, vim.fn.strdisplaywidth(lines[2]))
-        assert.equals(" #identity #cognito #signin #runbook", lines[3])
+        assert.truthy(lines[3]:find("^  #identity   #cognito ", 1))
 
         -- Every note starts in one column, and so does every detail.
         local notes_at = {}
@@ -113,19 +136,19 @@ describe("Claude's notes", function()
           table.insert(notes_at, col(line, note))
         end
         assert.equals(1, #vim.fn.uniq(vim.fn.sort(notes_at)), vim.inspect(notes_at))
-        local _, doing = find_line(lines, "^  ▸ ")
-        local _, blocked = find_line(lines, "^  ! ")
+        local _, doing = find_line(lines, "^  ▶ ")
+        local _, blocked = find_line(lines, "^  " .. BLOCKED .. " ")
         assert.equals(col(blocked, "blocked:"), col(doing, "Sonnet"))
-        assert.is_not_nil(find_line(lines, "^ ▸ Decisions %(6%) d   ▸ Details %(5%) t$"))
+        assert.is_not_nil(find_line(lines, "^  ▸ Decisions 6  d    ▸ Details 5  t $"))
       end)
     end
 
     it("cuts names and notes with … to fit a narrow pane", function()
       local lines = cn.render(dossier(), { width = 40, status = "working" })
-      local _, doing = find_line(lines, "^  ▸ ")
-      assert.equals("  ▸ Task 1: schema, mo…  Sonnet impleme…", doing)
-      local _, ticket = find_line(lines, "^  SD%-494")
-      assert.equals("  SD-494 · this session…  In development", ticket)
+      local _, doing = find_line(lines, "^  ▶ ")
+      assert.equals("  ▶ Task 1: schema, mo…  Sonnet impleme…", doing)
+      local _, ticket = find_line(lines, "SD%-494 · this")
+      assert.equals("  " .. TICKET .. " SD-494 · this sessi…  In development", ticket)
     end)
 
     it("uses no emoji, only symbols one cell wide", function()
@@ -162,20 +185,106 @@ describe("Claude's notes", function()
       assert.equals(links[3].col, styled[1].col)
     end)
 
+    it("draws the header as badges, the bar smooth and coloured, the hashtags as pills", function()
+      local lines, highlights = cn.render(dossier(), { width = 80, status = "working" })
+      assert.equals("FloatTermNotesKey", group_of(lines, highlights, 0, " SD-494 "))
+      assert.equals("FloatTermNotesTitle", group_of(lines, highlights, 0, " Console partner sign-in"))
+      assert.equals("FloatTermNotesStateWorking", group_of(lines, highlights, 1, " ◌ working "))
+      -- Four whole cells, then the partial one on the track, then the track.
+      assert.equals("FloatTermNotesBarError", group_of(lines, highlights, 1, "████"))
+      assert.equals("FloatTermNotesBarPartError", group_of(lines, highlights, 1, "▊"))
+      assert.equals("FloatTermNotesTrack", group_of(lines, highlights, 1, string.rep(" ", 8)))
+      assert.equals("Comment", group_of(lines, highlights, 1, " 1/4"))
+      local pills = vim.tbl_map(function(pair)
+        return pair[2]
+      end, groups_on(lines, highlights, 2))
+      assert.same({ "FloatTermNotesTag1", "FloatTermNotesTag2", "FloatTermNotesTag3", "FloatTermNotesTag4" }, pills)
+      assert.equals(
+        "FloatTermNotesStateDone",
+        group_of(
+          cn.render(dossier(), { status = "done" }),
+          select(2, cn.render(dossier(), { status = "done" })),
+          1,
+          " ✓ done "
+        )
+      )
+    end)
+
+    it("heads sections with an icon, a coloured title and a rule to the edge", function()
+      local lines, highlights = cn.render(dossier(), { width = 60 })
+      local row = find_line(lines, "Links") - 1
+      assert.equals(60, vim.fn.strdisplaywidth(lines[row + 1]))
+      assert.equals("FloatTermNotesHeadingLinks", group_of(lines, highlights, row, "\u{f0c1} Links"))
+      assert.equals(" ", (groups_on(lines, highlights, row)[2][1]:gsub("─", "")))
+      assert.equals("FloatTermNotesRule", groups_on(lines, highlights, row)[2][2])
+    end)
+
+    it("gives links an icon by kind and colours their notes by what happened", function()
+      local data = dossier()
+      data.links = {
+        { title = "PR #1 o/r", url = "https://github.com/o/r/pull/1", note = "Merged" },
+        { title = "SD-9 · ticket", url = "https://x.atlassian.net/browse/SD-9", note = "In development" },
+        { title = "o/r", url = "https://github.com/o/r", note = "On hold" },
+        { title = "Runbook", url = "https://example.com/runbook", note = "Closed" },
+        { title = "Build", url = "https://ci.example.com/1", note = "Failed" },
+      }
+      local lines, highlights = cn.render(data, { width = 80 })
+      local function row_of(text)
+        return find_line(lines, text) - 1
+      end
+      assert.equals("FloatTermNotesIconPR", group_of(lines, highlights, row_of "PR #1", PR .. " "))
+      assert.equals("FloatTermNotesIconTicket", group_of(lines, highlights, row_of "SD%-9", TICKET .. " "))
+      assert.equals("FloatTermNotesIconGithub", group_of(lines, highlights, row_of "o/r +On hold", "\u{f09b} "))
+      assert.equals("Comment", group_of(lines, highlights, row_of "Runbook", "\u{f08e} "))
+      assert.equals("FloatTermNotesNoteGreen", group_of(lines, highlights, row_of "PR #1", "Merged"))
+      assert.equals("FloatTermNotesNoteBlue", group_of(lines, highlights, row_of "SD%-9", "In development"))
+      assert.equals("FloatTermNotesNoteAmber", group_of(lines, highlights, row_of "o/r +On hold", "On hold"))
+      assert.equals("Comment", group_of(lines, highlights, row_of "Runbook", "Closed"))
+      assert.equals("FloatTermNotesNoteRed", group_of(lines, highlights, row_of "Build", "Failed"))
+    end)
+
+    it("colours the plan's glyphs, marks blocked items amber and picks out references in details", function()
+      local data = dossier()
+      data.tasks = {
+        task("Spec", "done"),
+        task("Build", "in_progress", "see PR #231 and SD-540"),
+        task("Deploy", "pending", "blocked on infra"),
+      }
+      local lines, highlights = cn.render(data, { width = 80 })
+      local function row_of(text)
+        return find_line(lines, text) - 1
+      end
+      assert.equals("FloatTermNotesPlanDone", group_of(lines, highlights, row_of "Spec", "✓ "))
+      assert.equals("FloatTermNotesPlanDoing", group_of(lines, highlights, row_of "Build", "▶ "))
+      local deploy = row_of "Deploy"
+      assert.truthy(lines[deploy + 1]:find("^  " .. BLOCKED .. " Deploy"))
+      assert.equals("FloatTermNotesPlanBlocked", group_of(lines, highlights, deploy, BLOCKED .. " "))
+      assert.equals("FloatTermNotesNoteAmber", group_of(lines, highlights, deploy, "blocked on infra"))
+      local build = row_of "Build"
+      assert.equals("Comment", group_of(lines, highlights, build, "see "))
+      assert.equals("FloatTermNotesRef", group_of(lines, highlights, build, "PR #231"))
+      assert.equals("FloatTermNotesRef", group_of(lines, highlights, build, "SD-540"))
+    end)
+
     it("folds decisions and details by default, and shows the open ones under the toggles", function()
-      local lines, _, targets = cn.render(dossier(), { width = 80 })
+      local lines, highlights, targets = cn.render(dossier(), { width = 80 })
       assert.is_nil(find_line(lines, "three"))
       local folds = vim.tbl_filter(function(t)
         return t.kind == "fold"
       end, targets)
       assert.same({ "decisions", "details" }, { folds[1].name, folds[2].name })
       assert.equals(folds[1].line, folds[2].line)
-      assert.equals("▸ Details (5) t", lines[folds[2].line + 1]:sub(folds[2].col + 1, folds[2].end_col))
+      assert.equals(" ▸ Details 5  t ", lines[folds[2].line + 1]:sub(folds[2].col + 1, folds[2].end_col))
+      -- A button, its key in a badge.
+      assert.equals("FloatTermNotesButton", group_of(lines, highlights, folds[2].line, " ▸ Details 5 "))
+      assert.equals("FloatTermNotesKeyCap", group_of(lines, highlights, folds[2].line, " t "))
 
       lines = cn.render(dossier(), { width = 80, open = { details = true } })
-      local toggles = find_line(lines, "Details %(5%)")
-      assert.equals(" ▸ Decisions (6) d   ▾ Details (5) t", lines[toggles])
-      assert.same({ "", " DETAILS", "  - a", "  - b" }, vim.list_slice(lines, toggles + 1, toggles + 4))
+      local toggles = find_line(lines, "Details 5")
+      assert.equals("  ▸ Decisions 6  d    ▾ Details 5  t ", lines[toggles])
+      assert.equals("", lines[toggles + 1])
+      assert.truthy(lines[toggles + 2]:find("\u{f05a} Details ─", 1, true))
+      assert.same({ "  - a", "  - b" }, vim.list_slice(lines, toggles + 3, toggles + 4))
       assert.is_nil(find_line(lines, "three"))
     end)
 
@@ -183,8 +292,8 @@ describe("Claude's notes", function()
       local data = dossier()
       data.decisions = { "Use one Cognito pool per region rather than one per partner" }
       local lines = cn.render(data, { width = 30, open = { decisions = true } })
-      assert.is_not_nil(find_line(lines, "^ ▾ Decisions %(1%) d$"))
-      assert.is_not_nil(find_line(lines, "^ ▸ Details %(5%) t$"))
+      assert.is_not_nil(find_line(lines, "^  ▾ Decisions 1  d $"))
+      assert.is_not_nil(find_line(lines, "^  ▸ Details 5  t $"))
       local i = find_line(lines, "^  %- Use one")
       assert.truthy(lines[i + 1]:find "^    %S")
       for _, line in ipairs(lines) do
@@ -199,24 +308,26 @@ describe("Claude's notes", function()
 
     it("works the percentage out from the tasks, half for one under way, rounded down", function()
       local lines = cn.render { tasks = { task("a", "done"), task("b", "in_progress") } }
-      assert.is_not_nil(find_line(lines, " 75%%$"))
+      assert.is_not_nil(find_line(lines, " 75%% 1/2$"))
       lines = cn.render { tasks = { task("a", "done"), task("b", "pending"), task("c", "blocked") } }
-      assert.is_not_nil(find_line(lines, " 33%%$"))
+      assert.is_not_nil(find_line(lines, " 33%% 1/3$"))
     end)
 
-    it("colours the bar green, blue while one is under way, red if one is blocked", function()
-      local function colour(tasks)
-        local lines, highlights = cn.render { now = "x", tasks = tasks }
-        local row = find_line(lines, "▏ %d+%%$") - 1
+    it("colours the bar green, blue while one is under way, red if one is blocked, amber waiting on you", function()
+      local function colour(tasks, status)
+        local lines, highlights = cn.render({ now = "x", tasks = tasks }, { status = status })
+        local row = find_line(lines, " %d+%% %d+/%d+$") - 1
         for _, hl in ipairs(highlights) do
-          if hl.line == row and hl.group:match "^Diagnostic" then
-            return hl.group
+          local name = hl.line == row and hl.group:match "^FloatTermNotesPercent(%a+)$"
+          if name then
+            return name
           end
         end
       end
-      assert.equals("DiagnosticOk", colour { task("a", "done") })
-      assert.equals("DiagnosticInfo", colour { task("a", "done"), task("b", "in_progress") })
-      assert.equals("DiagnosticError", colour { task("a", "in_progress"), task("b", "blocked") })
+      assert.equals("Ok", colour { task("a", "done") })
+      assert.equals("Info", colour { task("a", "done"), task("b", "in_progress") })
+      assert.equals("Error", colour { task("a", "in_progress"), task("b", "blocked") })
+      assert.equals("Warn", colour({ task("a", "in_progress") }, "needs_you"))
     end)
 
     it("shows what Claude is asking in place of what it's doing, and tidies hashtags", function()
@@ -226,15 +337,13 @@ describe("Claude's notes", function()
         hashtags = { "#auth", "two words" },
         tasks = { task("a", "pending") },
       }, { width = 60, status = "needs_you", needs_you = "Allow   Bash?" })
-      assert.truthy(lines[2]:find "^ ● Allow Bash%? +▕")
+      assert.truthy(lines[2]:find "^  ● needs you  Allow Bash%? +%S")
       assert.is_nil(lines[2]:find("writing", 1, true))
-      assert.equals(" #auth #two-words", lines[3])
-      local asking = vim.tbl_filter(function(hl)
-        return hl.line == 1 and hl.group == "FloatTermNeedsYou"
-      end, highlights)
-      assert.equals(1, #asking)
+      assert.equals("  #auth   #two-words ", lines[3])
+      assert.equals("FloatTermNotesStateNeedsYou", group_of(lines, highlights, 1, " ● needs you "))
+      assert.equals("FloatTermNotesAsking", group_of(lines, highlights, 1, " Allow Bash?"))
       lines = cn.render({ title = "t", now = "writing" }, { status = "needs_you", needs_you = "" })
-      assert.equals(" ● needs you", lines[2])
+      assert.equals("  ● needs you ", lines[2])
     end)
 
     it("folds done tasks into one row past six, and shows at most six task rows", function()
@@ -243,10 +352,10 @@ describe("Claude's notes", function()
         table.insert(tasks, task("task " .. i, i == 1 and "in_progress" or "pending", i == 1 and "writing" or nil))
       end
       local lines = cn.render { tasks = tasks }
-      local plan = find_line(lines, "^ PLAN$")
+      local plan = find_line(lines, "Plan ─")
       local rows = vim.list_slice(lines, plan + 1, plan + 6)
       assert.equals("  ✓ 2 done", rows[1])
-      assert.truthy(rows[2]:find "^  ▸ task 1 +writing$", rows[2])
+      assert.truthy(rows[2]:find "^  ▶ task 1 +writing$", rows[2])
       assert.equals("  · 6 more", rows[6])
       assert.is_nil(lines[plan + 7])
       assert.is_nil(find_line(lines, "d1"))
@@ -285,12 +394,87 @@ describe("Claude's notes", function()
       })
       local lines = cn.render(old, { width = 60, status = "working" })
       assert.equals(" ✳ Fixing login", lines[1])
-      assert.truthy(lines[2]:find "^ ◌ working · fix ")
-      assert.is_not_nil(find_line(lines, "^  the fix$"))
-      assert.is_not_nil(find_line(lines, "^  ticket$"))
-      assert.is_not_nil(find_line(lines, "^ ▸ Details %(1%) t$"))
+      assert.truthy(lines[2]:find "^  ◌ working  fix ")
+      assert.is_not_nil(find_line(lines, "^  " .. PR .. " the fix$"))
+      assert.is_not_nil(find_line(lines, "^  " .. TICKET .. " ticket$"))
+      assert.is_not_nil(find_line(lines, "^  ▸ Details 1  t $"))
       assert.is_nil(find_line(lines, "no link"))
       assert.is_nil(find_line(lines, "Decisions"))
+    end)
+
+    describe("workstreams and the parent", function()
+      local function streams()
+        return {
+          {
+            uid = "u-api",
+            name = "api-auth",
+            status = "needs_you",
+            needs_you = "Allow Bash?",
+            now = "Task 2",
+            percent = 50,
+            done = 1,
+            total = 2,
+            tasks = { task("a", "done"), task("b", "pending") },
+          },
+          {
+            uid = "u-ui",
+            name = "console-ui",
+            status = "working",
+            now = "Task 2: forms",
+            percent = 25,
+            done = 0,
+            total = 2,
+            tasks = { task("a", "in_progress"), task("b", "pending") },
+          },
+          { uid = "u-docs", name = "docs", status = "done", now = "" },
+        }
+      end
+
+      it("lists each child after LINKS with its state, what it's doing and a bar, under an overall bar", function()
+        local lines, highlights, targets = cn.render(dossier(), { width = 72, workstreams = streams() })
+        local heading = find_line(lines, "Workstreams ─")
+        assert.is_true(heading > find_line(lines, "Links ─"))
+        assert.is_true(heading < find_line(lines, "Plan ─"))
+        -- The average of the children with a plan.
+        assert.truthy(lines[heading + 1]:find "^  overall .* 37%%  2 of 3 with a plan$", lines[heading + 1])
+        assert.truthy(lines[heading + 2]:find "^  ● api%-auth +Allow Bash%? +███ +50%%$", lines[heading + 2])
+        assert.truthy(lines[heading + 3]:find "^  ◌ console%-ui +Task 2: forms +█▌ +25%%$", lines[heading + 3])
+        assert.equals("  ✓ docs", lines[heading + 4])
+        for _, line in ipairs(vim.list_slice(lines, heading + 2, heading + 3)) do
+          assert.equals(72, vim.fn.strdisplaywidth(line))
+        end
+        assert.equals("FloatTermNeedsYou", group_of(lines, highlights, heading + 1, "●"))
+        assert.equals("FloatTermNotesAsking", group_of(lines, highlights, heading + 1, "Allow Bash?"))
+        assert.equals("FloatTermNotesBarInfo", group_of(lines, highlights, heading + 2, "█"))
+        local tabs = vim.tbl_filter(function(t)
+          return t.kind == "tab"
+        end, targets)
+        assert.same(
+          { "u-api", "u-ui", "u-docs" },
+          vim.tbl_map(function(t)
+            return t.uid
+          end, tabs)
+        )
+        assert.equals("console-ui", lines[tabs[2].line + 1]:sub(tabs[2].col + 1, tabs[2].end_col))
+      end)
+
+      it("fits a narrow pane, dropping the small bars", function()
+        local lines = cn.render(dossier(), { width = 30, workstreams = streams() })
+        for _, line in ipairs(lines) do
+          assert.is_true(vim.fn.strdisplaywidth(line) <= 30, line)
+        end
+      end)
+
+      it("names the parent in a child's header, as a link to it", function()
+        local lines, highlights, targets =
+          cn.render(dossier(), { width = 60, part_of = { name = "auth-epic", uid = "p1" } })
+        assert.equals(" ↳ part of auth-epic", lines[2])
+        assert.equals("FloatTermNotesLink", group_of(lines, highlights, 1, "auth-epic"))
+        local tab = vim.tbl_filter(function(t)
+          return t.kind == "tab"
+        end, targets)[1]
+        assert.same({ "p1", 1 }, { tab.uid, tab.line })
+      end)
     end)
   end)
 

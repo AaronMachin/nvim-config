@@ -100,19 +100,44 @@ local SCHEMA = {
   required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details" },
 }
 
--- Plain symbols, one cell wide in any font (emoji aren't, and don't line up).
+-- Symbols one cell wide in any font (emoji aren't, and don't line up). The \u{f...}
+-- ones are Nerd Font glyphs, which NvChad needs anyway.
 local SYMBOLS = {
-  done = { "✓", "DiagnosticOk", "done" },
-  in_progress = { "▸", "DiagnosticInfo", "in progress" },
+  done = { "✓", "FloatTermNotesPlanDone", "done" },
+  in_progress = { "▶", "FloatTermNotesPlanDoing", "in progress" },
   pending = { "·", "Comment", "pending" },
-  blocked = { "!", "DiagnosticError", "blocked" },
+  blocked = { "\u{f05e}", "FloatTermNotesPlanBlocked", "blocked" },
 }
--- The tab's state, as the tab bar shows it.
+-- The tab's state, as the tab bar shows it, and its badge.
 local STATES = {
-  needs_you = { "●", "needs you", "FloatTermNeedsYou" },
-  working = { "◌", "working", "FloatTermWorking" },
-  done = { "✓", "done", "FloatTermDone" },
+  needs_you = { "●", "needs you", "FloatTermNotesStateNeedsYou", "FloatTermNeedsYou" },
+  working = { "◌", "working", "FloatTermNotesStateWorking", "FloatTermWorking" },
+  done = { "✓", "done", "FloatTermNotesStateDone", "FloatTermDone" },
 }
+-- Each section's heading: its icon and colour.
+local SECTIONS = {
+  links = { "\u{f0c1}", "Links", "FloatTermNotesHeadingLinks" },
+  workstreams = { "\u{f126}", "Workstreams", "FloatTermNotesHeadingWorkstreams" },
+  plan = { "\u{f0ae}", "Plan", "FloatTermNotesHeadingPlan" },
+  decisions = { "\u{f0e3}", "Decisions", "FloatTermNotesHeadingDecisions" },
+  details = { "\u{f05a}", "Details", "FloatTermNotesHeadingDetails" },
+}
+-- A link's icon by what it points at.
+local LINK_ICONS = {
+  pr = { "\u{f407}", "FloatTermNotesIconPR" },
+  ticket = { "\u{f145}", "FloatTermNotesIconTicket" },
+  github = { "\u{f09b}", "FloatTermNotesIconGithub" },
+  link = { "\u{f08e}", "Comment" },
+}
+-- A link's note coloured by what it says happened, first match wins.
+local NOTE_COLOURS = {
+  { { "merged", "ready", "done", "approved" }, "FloatTermNotesNoteGreen" },
+  { { "failed" }, "FloatTermNotesNoteRed" },
+  { { "hold", "blocked", "waiting" }, "FloatTermNotesNoteAmber" },
+  { { "closed" }, "Comment" },
+  { { "opened", "open", "in development", "review", "created", "pushed" }, "FloatTermNotesNoteBlue" },
+}
+local TAG_HLS = { "FloatTermNotesTag1", "FloatTermNotesTag2", "FloatTermNotesTag3", "FloatTermNotesTag4" }
 -- The folded sections at the bottom, in order, with the key that opens each.
 M.FOLDS = {
   { name = "decisions", label = "Decisions", key = "d" },
@@ -120,8 +145,8 @@ M.FOLDS = {
 }
 -- What each task counts for in the percentage: half for one under way.
 local WORTH = { done = 1, in_progress = 0.5 }
--- No one-eighth block: next to the empty part it reads as the bar's end.
-local EIGHTHS = { "", "", "▎", "▍", "▌", "▋", "▊", "▉" }
+-- Partial cells of the bar, by eighths.
+local EIGHTHS = { "", "▏", "▎", "▍", "▌", "▋", "▊", "▉" }
 local DEFAULT_WIDTH = 60
 -- More tasks than this and the done ones fold into one line, so the current and next
 -- ones stay in view. Still more, and the last ones become a count, so no more than
@@ -131,17 +156,100 @@ local FOLD_OVER = 6
 local GAP = 2
 local NEEDS_YOU_HL = "FloatTermNeedsYou"
 local LINK_HL = "FloatTermNotesLink"
-local HEADING_HL = "FloatTermNotesHeading"
 local TITLE_HL = "FloatTermNotesTitle"
+local RULE_HL = "FloatTermNotesRule"
+local REF_HL = "FloatTermNotesRef"
+local TRACK_HL = "FloatTermNotesTrack"
+
+-- The theme's colours: NvChad's base46 palette when it's there, else colours taken from
+-- the standard groups, so the dossier follows the theme either way.
+local function palette()
+  local ok, c = pcall(function()
+    return require("base46").get_theme_tb "base_30"
+  end)
+  if ok and type(c) == "table" and c.green then
+    return {
+      green = c.green,
+      blue = c.blue,
+      amber = c.yellow,
+      red = c.red,
+      purple = c.purple,
+      cyan = c.cyan,
+      orange = c.orange,
+      pink = c.baby_pink,
+      dim = c.light_grey,
+      pill = c.one_bg2,
+      track = c.one_bg3,
+      ink = c.black,
+      rule = c.line,
+    }
+  end
+  local function get(name, key)
+    return vim.api.nvim_get_hl(0, { name = name, link = false })[key]
+  end
+  return {
+    green = get("DiagnosticOk", "fg"),
+    blue = get("DiagnosticInfo", "fg"),
+    amber = get("DiagnosticWarn", "fg"),
+    red = get("DiagnosticError", "fg"),
+    purple = get("Statement", "fg"),
+    cyan = get("Special", "fg"),
+    orange = get("Constant", "fg"),
+    pink = get("Function", "fg"),
+    dim = get("Comment", "fg"),
+    pill = get("CursorLine", "bg") or get("Visual", "bg"),
+    track = get("Visual", "bg") or get("CursorLine", "bg"),
+    ink = get("Normal", "bg"),
+    rule = get("FloatBorder", "fg") or get("Comment", "fg"),
+  }
+end
 
 local function set_highlights()
+  local p = palette()
   local function fg(name)
     return vim.api.nvim_get_hl(0, { name = name, link = false }).fg
   end
+  local function set(name, spec)
+    vim.api.nvim_set_hl(0, name, spec)
+  end
+  -- Links stay overridable; the rest follow the theme each time it changes.
   vim.api.nvim_set_hl(0, LINK_HL, { fg = fg "Function" or fg "Identifier", underline = true, default = true })
-  vim.api.nvim_set_hl(0, HEADING_HL, { fg = fg "Comment", bold = true, default = true })
-  vim.api.nvim_set_hl(0, TITLE_HL, { bold = true, default = true })
   vim.api.nvim_set_hl(0, "FloatTermNotesCurrent", { link = "Visual", default = true })
+  set(TITLE_HL, { bold = true })
+  set("FloatTermNotesKey", { fg = p.ink, bg = p.blue, bold = true })
+  set("FloatTermNotesStateNeedsYou", { fg = p.ink, bg = p.amber, bold = true })
+  set("FloatTermNotesStateWorking", { fg = p.ink, bg = p.blue, bold = true })
+  set("FloatTermNotesStateDone", { fg = p.ink, bg = p.green, bold = true })
+  set("FloatTermNotesAsking", { fg = p.amber })
+  for name, colour in pairs { Ok = p.green, Info = p.blue, Warn = p.amber, Error = p.red } do
+    set("FloatTermNotesBar" .. name, { fg = colour })
+    -- The partial cell sits on the track, so it reads as one smooth bar.
+    set("FloatTermNotesBarPart" .. name, { fg = colour, bg = p.track })
+    set("FloatTermNotesPercent" .. name, { fg = colour, bold = true })
+  end
+  set(TRACK_HL, { bg = p.track })
+  for i, colour in ipairs { p.blue, p.purple, p.cyan, p.orange } do
+    set(TAG_HLS[i], { fg = colour, bg = p.pill })
+  end
+  set("FloatTermNotesHeadingLinks", { fg = p.blue, bold = true })
+  set("FloatTermNotesHeadingWorkstreams", { fg = p.purple, bold = true })
+  set("FloatTermNotesHeadingPlan", { fg = p.green, bold = true })
+  set("FloatTermNotesHeadingDecisions", { fg = p.orange, bold = true })
+  set("FloatTermNotesHeadingDetails", { fg = p.cyan, bold = true })
+  set(RULE_HL, { fg = p.rule })
+  set("FloatTermNotesIconPR", { fg = p.purple })
+  set("FloatTermNotesIconTicket", { fg = p.blue })
+  set("FloatTermNotesIconGithub", { fg = p.pink })
+  set("FloatTermNotesNoteGreen", { fg = p.green })
+  set("FloatTermNotesNoteBlue", { fg = p.blue })
+  set("FloatTermNotesNoteAmber", { fg = p.amber })
+  set("FloatTermNotesNoteRed", { fg = p.red })
+  set("FloatTermNotesPlanDone", { fg = p.green })
+  set("FloatTermNotesPlanDoing", { fg = p.blue, bold = true })
+  set("FloatTermNotesPlanBlocked", { fg = p.amber, bold = true })
+  set(REF_HL, { fg = p.blue })
+  set("FloatTermNotesButton", { bg = p.pill })
+  set("FloatTermNotesKeyCap", { fg = p.ink, bg = p.amber, bold = true })
 end
 set_highlights()
 vim.api.nvim_create_autocmd("ColorScheme", {
@@ -184,6 +292,15 @@ local function percent_of(tasks)
     sum = sum + (WORTH[task.state] or 0)
   end
   return math.floor(sum * 100 / #tasks)
+end
+
+-- A plan's progress: the percentage, how many tasks are done and how many there are.
+function M.progress(tasks)
+  local done = 0
+  for _, task in ipairs(tasks) do
+    done = done + (task.state == "done" and 1 or 0)
+  end
+  return percent_of(tasks), done, #tasks
 end
 
 -- The line shown while the tab's Claude waits on you, where there's no dossier to put
@@ -257,24 +374,41 @@ function M.normalise(data)
   return out
 end
 
--- The bar's filled and empty parts, `cells` wide, in eighths of a cell.
-local function bar_parts(percent, cells)
-  local eighths = math.floor(cells * 8 * percent / 100)
-  local full, part = math.floor(eighths / 8), EIGHTHS[eighths % 8 + 1]
-  local filled = string.rep("█", full) .. part
-  return filled, string.rep("░", cells - full - (part ~= "" and 1 or 0))
-end
-
-local function bar_colour(tasks)
-  local colour = "DiagnosticOk"
+-- The bar's colour: red with a task blocked, amber while the tab waits on you, blue
+-- while one is under way, else green.
+local function bar_colour(tasks, status)
+  local colour = "Ok"
   for _, task in ipairs(tasks) do
     if task.state == "blocked" then
-      return "DiagnosticError"
+      return "Error"
     elseif task.state == "in_progress" then
-      colour = "DiagnosticInfo"
+      colour = "Info"
     end
   end
+  if status == "needs_you" then
+    return "Warn"
+  end
   return colour
+end
+
+-- A bar `cells` wide as pieces { text, group }: whole cells, the partial one in
+-- eighths sitting on the track, then the track (spaces with a background, so it copies
+-- as blank).
+local function bar_pieces(percent, cells, colour)
+  local eighths = math.floor(cells * 8 * percent / 100)
+  local full, part = math.floor(eighths / 8), EIGHTHS[eighths % 8 + 1]
+  local pieces = {}
+  if full > 0 then
+    table.insert(pieces, { string.rep("█", full), "FloatTermNotesBar" .. colour })
+  end
+  if part ~= "" then
+    table.insert(pieces, { part, "FloatTermNotesBarPart" .. colour })
+  end
+  local rest = cells - full - (part ~= "" and 1 or 0)
+  if rest > 0 then
+    table.insert(pieces, { string.rep(" ", rest), TRACK_HL })
+  end
+  return pieces
 end
 
 -- The tasks the plan shows: past FOLD_OVER the done ones fold into one row and the
@@ -329,14 +463,81 @@ local function wrap(s, width, first, indent)
   return out
 end
 
+-- The ticket key a title starts with ("SD-494 · Console sign-in"), and the rest.
+local function split_key(title)
+  local key = title:match "^(%u[%u%d]*%-%d+)"
+  if not key then
+    return nil, title
+  end
+  local rest = vim.trim(title:sub(#key + 1)):gsub("^·%s*", ""):gsub("^[:|%-]%s*", "")
+  return key, rest
+end
+
+-- What a link points at: a pull request, a ticket, elsewhere on GitHub, or anything.
+local function link_kind(link)
+  if link.url:match "^https?://github%.com/[^/]+/[^/]+/pull/%d+" or link.title:match "%f[%w]PR%f[%W]" then
+    return "pr"
+  elseif
+    link.title:match "%f[%w]%u[%u%d]*%-%d+%f[%W]"
+    or link.url:match "atlassian%.net"
+    or link.url:match "/browse/%u[%u%d]*%-%d+"
+  then
+    return "ticket"
+  elseif link.url:match "^https?://github%.com/" then
+    return "github"
+  end
+  return "link"
+end
+
+local function note_colour(note)
+  local lower = note:lower()
+  for _, rule in ipairs(NOTE_COLOURS) do
+    for _, word in ipairs(rule[1]) do
+      -- From the start of a word, so "reviewing" and "reopened" count too.
+      if lower:find("%f[%w]" .. word:gsub(" ", "%%s+")) then
+        return rule[2]
+      end
+    end
+  end
+  return "Comment"
+end
+
+-- Where PR and ticket references are in `s`: { from, to } byte ranges, 1-based.
+local function references(s)
+  local found = {}
+  for _, pattern in ipairs { "()PR%s*#%d+()", "()%f[%w]%u[%u%d]*%-%d+%f[%W]()", "()%f[%w#]#%d+()" } do
+    for from, to in s:gmatch(pattern) do
+      local inside = false
+      for _, other in ipairs(found) do
+        inside = inside or (from >= other[1] and from < other[2])
+      end
+      if not inside then
+        table.insert(found, { from, to })
+      end
+    end
+  end
+  table.sort(found, function(a, b)
+    return a[1] < b[1]
+  end)
+  return found
+end
+
+local function is_blocked(task)
+  return task.state == "blocked" or (task.name .. " " .. task.detail):lower():find("blocked", 1, true) ~= nil
+end
+
 -- The dossier, drawn with plain text and highlights to fit `width` cells. Returns the
 -- lines, their highlights ({ line, col, end_col, group }, 0-based bytes) and what can
--- be acted on: { kind = "link", line, col, end_col, url, title } for each link, and
--- { kind = "fold", name, line, col, end_col } for each fold toggle. opts:
---   width      the text width (DEFAULT_WIDTH)
---   status     the tab's status (needs_you, working, done), or nil outside a tab
---   needs_you  what the tab's Claude is asking while it waits ("" without a message)
---   open       { decisions = true, details = true } for the folds shown open
+-- be acted on: { kind = "link", line, col, end_col, url, title } for each link,
+-- { kind = "fold", name, line, col, end_col } for each fold toggle and { kind = "tab",
+-- uid, title, line, col, end_col } for each related tab. opts:
+--   width        the text width (DEFAULT_WIDTH)
+--   status       the tab's status (needs_you, working, done), or nil outside a tab
+--   needs_you    what the tab's Claude is asking while it waits ("" without a message)
+--   open         { decisions = true, details = true } for the folds shown open
+--   part_of      { name, uid }: the tab this one sits under (lua/floatterm/groups)
+--   workstreams  the tabs under this one, each { uid, name, status, needs_you, now,
+--                percent, done, total, tasks } (lua/floatterm/groups M.dossier_opts)
 function M.render(data, opts)
   opts = opts or {}
   data = M.normalise(data)
@@ -352,102 +553,142 @@ function M.render(data, opts)
       table.insert(highlights, { line = row, col = col, end_col = end_col, group = group })
     end
   end
-  local function heading(name)
+  -- A line from pieces { text, group }, appended to `line` (" " by default). Returns
+  -- the line; the highlights go on row #lines (the line about to be added).
+  local function compose(pieces, line)
+    line = line or " "
+    local row = #lines
+    for _, piece in ipairs(pieces) do
+      highlight(row, #line, #line + #piece[1], piece[2])
+      line = line .. piece[1]
+    end
+    return line
+  end
+  -- An icon and a coloured title, with a thin rule to the edge.
+  local function heading(section)
+    local spec = SECTIONS[section]
     if #lines > 0 then
       add ""
     end
-    highlight(add(" " .. name), 1, 1 + #name, HEADING_HL)
+    local label = spec[1] .. " " .. spec[2]
+    local rule = string.rep("─", math.max(0, width - 2 - width_of(label)))
+    add(compose { { label, spec[3] }, { rule ~= "" and (" " .. rule) or "", RULE_HL } })
   end
 
-  -- Header: the title, the state with what Claude is doing and the bar, the hashtags.
+  -- Header: the ticket key as a badge and the title, the tab this sits under, the state
+  -- with what Claude is doing and the bar, the hashtags.
   if data.title ~= "" then
-    local title = fit(data.title, width - 3)
-    local row = add(" ✳ " .. title)
-    highlight(row, #" ✳ ", #" ✳ " + #title, TITLE_HL)
+    local key, rest = split_key(data.title)
+    local pieces = {}
+    if key then
+      table.insert(pieces, { " " .. key .. " ", "FloatTermNotesKey" })
+      if rest ~= "" then
+        table.insert(pieces, { " " .. fit(rest, math.max(1, width - 4 - width_of(key))), TITLE_HL })
+      end
+    else
+      table.insert(pieces, { "✳ ", "Comment" })
+      table.insert(pieces, { fit(data.title, width - 3), TITLE_HL })
+    end
+    add(compose(pieces))
+  end
+  if opts.part_of then
+    local name = fit(opts.part_of.name, math.max(1, width - 12))
+    local line = compose { { "↳ part of ", "Comment" } }
+    local col = #line
+    line = compose({ { name, LINK_HL } }, line)
+    local row = add(line)
+    table.insert(targets, {
+      kind = "tab",
+      uid = opts.part_of.uid,
+      title = opts.part_of.name,
+      line = row,
+      col = col,
+      end_col = col + #name,
+    })
   end
 
-  local bar, bar_hls = nil, {}
+  local bar = nil
   if #data.tasks > 0 then
-    local percent = percent_of(data.tasks)
-    local filled, empty = bar_parts(percent, math.max(6, math.min(20, math.floor(width / 6))))
-    bar = "▕" .. filled .. empty .. "▏" .. (" %d%%"):format(percent)
-    local start = #"▕"
-    bar_hls = {
-      { 0, start, "Comment" },
-      { start, start + #filled, bar_colour(data.tasks) },
-      { start + #filled, start + #filled + #empty, "Comment" },
-      { start + #filled + #empty, start + #filled + #empty + #"▏", "Comment" },
-    }
+    local percent, done, total = M.progress(data.tasks)
+    local colour = bar_colour(data.tasks, opts.status)
+    bar = bar_pieces(percent, math.max(6, math.min(16, math.floor(width / 6))), colour)
+    table.insert(bar, { (" %d%%"):format(percent), "FloatTermNotesPercent" .. colour })
+    table.insert(bar, { (" %d/%d"):format(done, total), "Comment" })
+  end
+  local bar_width = 0
+  for _, piece in ipairs(bar or {}) do
+    bar_width = bar_width + width_of(piece[1])
   end
   -- The left part as pieces { text, group }, cut together to the room left of the bar.
   local pieces = {}
   local asking = opts.status == "needs_you" or opts.needs_you ~= nil
   if asking then
     local message = text(opts.needs_you):gsub("%s+", " ")
-    table.insert(pieces, { "● " .. (message ~= "" and message or "needs you"), NEEDS_YOU_HL })
+    table.insert(pieces, { " ● needs you ", "FloatTermNotesStateNeedsYou" })
+    if message ~= "" then
+      table.insert(pieces, { " " .. message, "FloatTermNotesAsking" })
+    end
   elseif STATES[opts.status] then
     local state = STATES[opts.status]
-    table.insert(pieces, { state[1] .. " " .. state[2], state[3] })
+    table.insert(pieces, { " " .. state[1] .. " " .. state[2] .. " ", state[3] })
     if data.now ~= "" then
-      table.insert(pieces, { " · " .. data.now })
+      table.insert(pieces, { " " .. data.now })
     end
   elseif data.now ~= "" then
     table.insert(pieces, { data.now })
   end
-  local room = width - 1 - (bar and (width_of(bar) + GAP) or 0)
+  local room = width - 1 - (bar and (bar_width + GAP) or 0)
   -- Too narrow for both: the bar goes on a line of its own.
   local own_line = bar and #pieces > 0 and room < 12
   if own_line then
     room = width - 1
   end
   if #pieces > 0 then
-    local line, row = " ", #lines
+    local fitted = {}
+    local used = 0
     for _, piece in ipairs(pieces) do
-      local left = room - width_of(line) + 1
+      local left = room - used
       if left <= 0 then
         break
       end
       local part = fit(piece[1], left)
-      if piece[2] then
-        highlight(row, #line, #line + #part, piece[2])
-      end
-      line = line .. part
+      table.insert(fitted, { part, piece[2] })
+      used = used + width_of(part)
     end
     if bar and not own_line then
-      local pad = width - width_of(line) - width_of(bar)
-      line = line .. string.rep(" ", pad)
-      for _, hl in ipairs(bar_hls) do
-        highlight(row, #line + hl[1], #line + hl[2], hl[3])
-      end
-      line = line .. bar
+      table.insert(fitted, { string.rep(" ", width - 1 - used - bar_width) })
+      vim.list_extend(fitted, bar)
       bar = nil
     end
-    add(line)
+    add(compose(fitted))
   end
   if bar then
-    local line = string.rep(" ", math.max(1, width - width_of(bar)))
-    local row = add(line .. bar)
-    for _, hl in ipairs(bar_hls) do
-      highlight(row, #line + hl[1], #line + hl[2], hl[3])
-    end
+    add(compose(bar, string.rep(" ", math.max(1, width - bar_width))))
   end
   if #data.hashtags > 0 then
-    local line = " "
-    for _, tag in ipairs(data.hashtags) do
-      local next = line == " " and (line .. tag) or (line .. " " .. tag)
-      if width_of(next) > width then
+    -- Pills, each in the next of a few colours, until the line is full.
+    local fitted, used = {}, 1
+    for i, tag in ipairs(data.hashtags) do
+      local pill = " " .. tag .. " "
+      local extra = width_of(pill) + (i > 1 and 1 or 0)
+      if used + extra > width then
         break
       end
-      line = next
+      if i > 1 then
+        table.insert(fitted, { " " })
+      end
+      table.insert(fitted, { pill, TAG_HLS[(i - 1) % #TAG_HLS + 1] })
+      used = used + extra
     end
-    if line ~= " " then
-      highlight(add(line), 1, #line, "Comment")
+    if #fitted > 0 then
+      add(compose(fitted))
     end
   end
 
   -- Two columns, the right one starting in one column for every row. Each row is
-  -- { prefix, prefix_group, left, left_group, right, right_group }; the left side is
-  -- cut first, as the notes are short, then the right with … to what's left.
+  -- { prefix, prefix_group, left, left_group, right, right_group, refs }; the left side
+  -- is cut first, as the notes are short, then the right with … to what's left. With
+  -- refs, PR and ticket references in the right side stand out.
   local function columns(rows)
     local avail = width - 2
     local widest_left, widest_right = 0, 0
@@ -474,7 +715,15 @@ function M.render(data, opts)
       if r.right ~= "" and right_room >= 2 then
         line = line .. string.rep(" ", 2 + column - width_of(line) + GAP)
         local right = fit(r.right, right_room)
-        highlight(row, #line, #line + #right, r.right_group)
+        local at = #line
+        -- The right side's own colour around its references, so none overlap.
+        local from = 1
+        for _, ref in ipairs(r.refs and references(right) or {}) do
+          highlight(row, at + from - 1, at + ref[1] - 1, r.right_group)
+          highlight(row, at + ref[1] - 1, at + ref[2] - 1, REF_HL)
+          from = ref[2]
+        end
+        highlight(row, at + from - 1, at + #right, r.right_group)
         line = line .. right
       end
       add(line)
@@ -484,9 +733,17 @@ function M.render(data, opts)
   end
 
   if #data.links > 0 then
-    heading "LINKS"
+    heading "links"
     local rows = vim.tbl_map(function(link)
-      return { prefix = "", left = link.title, left_group = LINK_HL, right = link.note, right_group = "Comment" }
+      local icon = LINK_ICONS[link_kind(link)]
+      return {
+        prefix = icon[1] .. " ",
+        prefix_group = icon[2],
+        left = link.title,
+        left_group = LINK_HL,
+        right = link.note,
+        right_group = note_colour(link.note),
+      }
     end, data.links)
     for i, placed in ipairs(columns(rows)) do
       local link = data.links[i]
@@ -501,14 +758,98 @@ function M.render(data, opts)
     end
   end
 
+  -- The tabs under this one: the bar over all of them, then each with its state, what
+  -- it's doing (or asking) and a small bar of its own.
+  local workstreams = opts.workstreams or {}
+  if #workstreams > 0 then
+    heading "workstreams"
+    local sum, counted, blocked, asking_any, working = 0, 0, false, false, false
+    for _, w in ipairs(workstreams) do
+      if w.percent then
+        sum, counted = sum + w.percent, counted + 1
+        for _, task in ipairs(w.tasks or {}) do
+          blocked = blocked or task.state == "blocked"
+        end
+      end
+      asking_any = asking_any or w.status == "needs_you"
+      working = working or w.status == "working"
+    end
+    local function colour_of(w)
+      return bar_colour(w.tasks or {}, w.status)
+    end
+    local small = 6
+    local right_width = small + 4 -- the bar and " 50%" (up to "100%")
+    if counted > 0 then
+      local overall = math.floor(sum / counted)
+      local colour = blocked and "Error" or asking_any and "Warn" or working and "Info" or "Ok"
+      local pieces = { { "overall ", "Comment" } }
+      vim.list_extend(pieces, bar_pieces(overall, math.max(6, math.min(16, math.floor(width / 4))), colour))
+      table.insert(pieces, { (" %d%%"):format(overall), "FloatTermNotesPercent" .. colour })
+      local count = { ("  %d of %d with a plan"):format(counted, #workstreams), "Comment" }
+      local used = 2
+      for _, piece in ipairs(pieces) do
+        used = used + width_of(piece[1])
+      end
+      -- Narrow: without the count.
+      if used + width_of(count[1]) <= width then
+        table.insert(pieces, count)
+      end
+      add(compose(pieces, "  "))
+    end
+    local widest = 0
+    for _, w in ipairs(workstreams) do
+      widest = math.max(widest, width_of(w.name))
+    end
+    local avail = width - 4 -- the indent, the glyph and its space
+    local with_bar = avail - right_width - GAP >= 12
+    local name_col = math.min(widest, math.max(6, math.floor(avail * 0.35)))
+    for _, w in ipairs(workstreams) do
+      local state = STATES[w.status] or { "✳", "new", nil, "FloatTermDone" }
+      local line = "  "
+      local row = #lines
+      highlight(row, #line, #line + #state[1], state[4])
+      line = line .. state[1] .. " "
+      local name = fit(w.name, name_col)
+      local name_at = #line
+      highlight(row, #line, #line + #name, TITLE_HL)
+      line = line .. name
+      local room = avail - name_col - GAP - (with_bar and (right_width + GAP) or 0)
+      local doing, group = w.now or "", "Comment"
+      if w.needs_you then
+        doing, group = w.needs_you ~= "" and w.needs_you or "needs you", "FloatTermNotesAsking"
+      end
+      if doing ~= "" and room >= 4 then
+        line = line .. string.rep(" ", name_col - width_of(name) + GAP)
+        doing = fit(doing, room)
+        highlight(row, #line, #line + #doing, group)
+        line = line .. doing
+      end
+      if with_bar and w.percent then
+        local used = width_of(line)
+        local pieces = bar_pieces(w.percent, small, colour_of(w))
+        table.insert(pieces, { ("%4s"):format(w.percent .. "%"), "Comment" })
+        line = compose(pieces, line .. string.rep(" ", width - right_width - used))
+      end
+      add(line)
+      table.insert(targets, {
+        kind = "tab",
+        uid = w.uid,
+        title = w.name,
+        line = row,
+        col = name_at,
+        end_col = name_at + #name,
+      })
+    end
+  end
+
   if #data.tasks > 0 then
-    heading "PLAN"
+    heading "plan"
     local rows = {}
     for _, task in ipairs(plan_rows(data.tasks)) do
       if task.folded then
         table.insert(rows, {
           prefix = "✓ ",
-          prefix_group = "DiagnosticOk",
+          prefix_group = "FloatTermNotesPlanDone",
           left = ("%d done"):format(task.folded),
           left_group = "Comment",
           right = "",
@@ -522,7 +863,8 @@ function M.render(data, opts)
           right = "",
         })
       else
-        local symbol = SYMBOLS[task.state]
+        local blocked = is_blocked(task)
+        local symbol = SYMBOLS[blocked and "blocked" or task.state]
         local right = task.detail
         if task.state == "blocked" then
           right = "blocked" .. (right ~= "" and (": " .. right) or "")
@@ -531,43 +873,45 @@ function M.render(data, opts)
           prefix = symbol[1] .. " ",
           prefix_group = symbol[2],
           left = task.name,
-          left_group = task.state == "pending" and "Comment" or nil,
+          left_group = blocked and "FloatTermNotesPlanBlocked" or (task.state == "pending" and "Comment" or nil),
           right = right,
-          right_group = task.state == "blocked" and "DiagnosticError" or "Comment",
+          right_group = blocked and "FloatTermNotesNoteAmber" or "Comment",
+          refs = true,
         })
       end
     end
     columns(rows)
   end
 
-  -- Decisions and details: one line of toggles, folded by default, then whichever are
-  -- open below it.
+  -- Decisions and details: a row of buttons, the key on each in a badge, folded by
+  -- default, then whichever are open below it.
   local toggles = {}
   for _, fold in ipairs(M.FOLDS) do
     if #data[fold.name] > 0 then
-      local label = ("%s %s (%d)"):format(open[fold.name] and "▾" or "▸", fold.label, #data[fold.name])
-      table.insert(toggles, { fold = fold, label = label, text = label .. " " .. fold.key })
+      local label = (" %s %s %d "):format(open[fold.name] and "▾" or "▸", fold.label, #data[fold.name])
+      local key = " " .. fold.key .. " "
+      table.insert(toggles, { fold = fold, label = label, key = key, text = label .. key })
     end
   end
   if #toggles > 0 then
     add ""
     local together = " "
     for i, toggle in ipairs(toggles) do
-      together = together .. (i > 1 and "   " or "") .. toggle.text
+      together = together .. (i > 1 and "  " or "") .. toggle.text
     end
     -- Too narrow for one line, a line each.
     local per_line = width_of(together) > width
-    local line, row = " ", nil
+    local line = " "
     for i, toggle in ipairs(toggles) do
       if per_line and i > 1 then
         add(line)
         line = " "
       elseif i > 1 then
-        line = line .. "   "
+        line = line .. "  "
       end
-      row = #lines
-      local col = #line
-      highlight(row, col + #toggle.label + 1, col + #toggle.text, "Comment")
+      local row, col = #lines, #line
+      highlight(row, col, col + #toggle.label, "FloatTermNotesButton")
+      highlight(row, col + #toggle.label, col + #toggle.text, "FloatTermNotesKeyCap")
       table.insert(targets, {
         kind = "fold",
         name = toggle.fold.name,
@@ -581,7 +925,7 @@ function M.render(data, opts)
     for _, toggle in ipairs(toggles) do
       local name = toggle.fold.name
       if open[name] then
-        heading(toggle.fold.label:upper())
+        heading(name)
         for _, item in ipairs(data[name]) do
           for _, line in ipairs(wrap(item, width, "  - ", "    ")) do
             add(line)

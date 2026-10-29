@@ -8,7 +8,8 @@
 -- FloatTermTabChanged sees it:
 --   SessionStart      kind = "claude" with its session_id. A `claude` typed in a
 --                     shell tab makes it a Claude tab this way
---   UserPromptSubmit  status = "working", last_prompt = the prompt's first line
+--   UserPromptSubmit  status = "working", last_prompt = the prompt's first line. The
+--                     first one goes to lua/floatterm/groups, which may suggest a parent
 --   Notification      status = "needs_you" and needs_you_message = what it asks, with
 --                     a notification saying so, when Claude asks a question or for
 --                     permission
@@ -210,10 +211,17 @@ local function apply(record, event, pid)
     floatterm.update(record.buf, claude)
     record_start_ref(record)
   elseif name == "UserPromptSubmit" then
+    -- No last prompt yet (a resumed tab keeps its last one): this is the first.
+    local first = record.last_prompt == nil
     claude.status = "working"
     claude.needs_you_message = vim.NIL
     claude.last_prompt = first_line(event.prompt)
     floatterm.update(record.buf, claude)
+    if first then
+      pcall(function()
+        require("floatterm.groups").on_prompt(record, text(event.prompt))
+      end)
+    end
   elseif name == "Notification" then
     if event.notification_type and not ASKS[event.notification_type] then
       return

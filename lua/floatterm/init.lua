@@ -23,8 +23,11 @@ local settings = require "floatterm.settings"
 
 -- Records, in tab order:
 --   id            unique for this nvim, also given to the job as $FLOATTERM_TAB_ID
+--   uid           unique and kept across restarts (lua/floatterm/restore saves it)
 --   buf, job
---   kind          "shell" or "claude"
+--   kind          "shell", "claude", or "group": a heading with no job, whose buffer
+--                 is never shown (see M.new_group)
+--   parent_uid    the uid of the tab this one sits under (lua/floatterm/groups), or nil
 --   cwd           the folder the tab started in
 --   label         a name the user gave it, or nil
 --   command       what's running in it (a shell tab's foreground command), or nil
@@ -388,6 +391,24 @@ local function close_split_windows()
   end
 end
 
+-- lua/floatterm/groups, once loaded, says which tabs next/previous step over (tabs
+-- folded under their parent) and how a tab moves with its children.
+local function groups()
+  return package.loaded["floatterm.groups"]
+end
+
+-- Whether next/previous stop on a tab: never a group heading or a folded-away child.
+local function steppable(record)
+  local g = groups()
+  return record.kind ~= "group" and not (g and g.hidden(record))
+end
+
+local function new_uid()
+  return (vim.uv.random(6):gsub(".", function(c)
+    return ("%02x"):format(c:byte())
+  end))
+end
+
 local function index_of(buf)
   for i, record in ipairs(tabs) do
     if record.buf == buf then
@@ -568,6 +589,29 @@ end
 
 -- Puts the current tab's buffer in the float, opening the float if it's hidden.
 local function show_current()
+  -- A group heading has nothing to show: the nearest real tab after it (its first
+  -- child), else before it.
+  if tabs[current].kind == "group" then
+    local found = nil
+    for i = current + 1, #tabs do
+      if tabs[i].kind ~= "group" then
+        found = i
+        break
+      end
+    end
+    for i = current - 1, 1, -1 do
+      if found then
+        break
+      end
+      if tabs[i].kind ~= "group" then
+        found = i
+      end
+    end
+    if not found then
+      return
+    end
+    current = found
+  end
   local buf = tabs[current].buf
 
   if placement.split.on then
@@ -749,6 +793,7 @@ function M.new_tab(argv, opts)
   local buf = api.nvim_create_buf(false, true)
   local record = {
     id = next_id,
+    uid = opts.uid or new_uid(),
     buf = buf,
     kind = opts.kind or "shell",
     cwd = opts.cwd or vim.uv.cwd(),
@@ -790,6 +835,72 @@ function M.new_tab(argv, opts)
     fire "FloatTermTabsChanged"
   end
   return record.job, buf
+end
+
+-- Adds a group heading: a tab with no job that only names the tabs under it. It has a
+-- buffer so the record works like any other (M.update, M.record), but the float never
+-- shows it. opts: label, cwd, uid, and before (a tab buffer to put it in front of;
+-- the end otherwise). Returns its buffer. lua/floatterm/groups removes it with
+-- M.remove_tab once nothing sits under it.
+function M.new_group(opts)
+  opts = opts or {}
+  local buf = api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "hide"
+  local record = {
+    id = next_id,
+    uid = opts.uid or new_uid(),
+    buf = buf,
+    kind = "group",
+    cwd = opts.cwd or vim.uv.cwd(),
+    label = opts.label,
+  }
+  next_id = next_id + 1
+  local at = opts.before and index_of(opts.before) or (#tabs + 1)
+  table.insert(tabs, at, record)
+  if current >= at then
+    current = current + 1
+  end
+  fire "FloatTermTabsChanged"
+  return buf
+end
+
+-- Removes a tab with no job (a group heading). Tabs with a job go when it exits.
+function M.remove_tab(buf)
+  local index = index_of(buf)
+  if not index or tabs[index].job then
+    return
+  end
+  table.remove(tabs, index)
+  if current > index or current > #tabs then
+    current = math.max(current - 1, #tabs == 0 and 0 or 1)
+  end
+  if api.nvim_buf_is_valid(buf) then
+    api.nvim_buf_delete(buf, { force = true })
+  end
+  fire "FloatTermTabsChanged"
+end
+
+-- Puts the tabs in the order of `bufs` (every tab's buffer, once each). The tab showing
+-- stays showing. For lua/floatterm/groups, which keeps children after their parent.
+function M.set_order(bufs)
+  if #bufs ~= #tabs then
+    return
+  end
+  local reordered = {}
+  for i, buf in ipairs(bufs) do
+    local index = index_of(buf)
+    if not index then
+      return
+    end
+    reordered[i] = tabs[index]
+  end
+  local showing = tabs[current]
+  tabs = reordered
+  current = showing and index_of(showing.buf) or current
+  if win_is_open() and not placement.split.on then
+    api.nvim_win_set_config(win, { title = title(boxes()), title_pos = "center" })
+  end
+  fire "FloatTermTabsChanged"
 end
 
 -- Opens a shell tab and types `command` into it, so the shell stays open afterwards
@@ -858,6 +969,20 @@ function M.focus_buf(buf)
   if not i then
     return false
   end
+  -- A group heading shows its first child.
+  if tabs[i].kind == "group" then
+    local uid = tabs[i].uid
+    i = nil
+    for n, record in ipairs(tabs) do
+      if record.parent_uid == uid and record.kind ~= "group" then
+        i = n
+        break
+      end
+    end
+    if not i then
+      return false
+    end
+  end
   current = i
   show_current()
   return true
@@ -901,18 +1026,36 @@ function M.hide()
   hide()
 end
 
+-- The next tab `dir` (1 or -1) along from the current one that next/previous stop on,
+-- going round; the current one when there's no other.
+local function step_from(dir)
+  local i = current
+  for _ = 1, #tabs do
+    i = (i - 1 + dir) % #tabs + 1
+    if steppable(tabs[i]) then
+      return i
+    end
+  end
+  return current
+end
+
 function M.next_tab()
   if #tabs < 2 then
     return
   end
 
-  current = current % #tabs + 1
+  current = step_from(1)
   show_current()
 end
 
 -- Moves a tab `delta` places along (-1 earlier, 1 later), stopping at the ends. The
 -- tab showing stays showing.
 function M.move_tab(buf, delta)
+  -- With groups loaded, a parent moves with its children and a child among its siblings.
+  local g = groups()
+  if g then
+    return g.move_tab(buf, delta)
+  end
   local from = index_of(buf)
   if not from then
     return
@@ -967,7 +1110,7 @@ function M.previous_tab()
     return
   end
 
-  current = (current - 2) % #tabs + 1
+  current = step_from(-1)
   show_current()
 end
 

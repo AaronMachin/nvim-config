@@ -424,11 +424,11 @@ describe("notes", function()
       for _, line in ipairs(vim.split(text, "\n")) do
         assert.is_true(vim.fn.strdisplaywidth(line) <= width, line)
       end
-      assert.truthy(text:find("✳ SD-494 · Console partner sign-in", 1, true))
-      assert.truthy(text:find("◌ working · Task 1", 1, true))
+      assert.truthy(text:find(" SD-494  Console partner sign-in", 1, true))
+      assert.truthy(text:find(" ◌ working  Task 1", 1, true))
       assert.truthy(text:find("PR #231 cloud/console", 1, true))
       assert.is_nil(text:find("https://", 1, true))
-      assert.truthy(text:find("▸ Decisions (1) d   ▸ Details (1) t", 1, true))
+      assert.truthy(text:find(" ▸ Decisions 1  d    ▸ Details 1  t ", 1, true))
       assert.is_nil(text:find("One pool per region", 1, true))
       assert.is_false(vim.bo[api.nvim_win_get_buf(notes.state().claude)].modifiable)
     end)
@@ -444,13 +444,13 @@ describe("notes", function()
       assert.same({
         "SD-494 · this session's ticket",
         "PR #231 cloud/console",
-        "▸ Decisions (1) d",
-        "▸ Details (1) t",
+        " ▸ Decisions 1  d ",
+        " ▸ Details 1  t ",
       }, seen)
       keys "<Tab>"
       assert.equals("SD-494 · this session's ticket", current())
       keys "<S-Tab>"
-      assert.equals("▸ Details (1) t", current())
+      assert.equals(" ▸ Details 1  t ", current())
     end)
 
     it("Enter opens a link in the browser, or opens and folds a fold, remembered for the note", function()
@@ -460,10 +460,10 @@ describe("notes", function()
       assert.same({ "https://github.com/cloud/console/pull/231" }, opened)
       keys "<Tab><CR>"
       local lines = view_lines()
-      assert.is_not_nil(line_with(lines, "▾ Decisions (1) d"))
+      assert.is_not_nil(line_with(lines, "▾ Decisions 1  d"))
       assert.is_not_nil(line_with(lines, "  - One pool per region"))
       -- Still on the toggle, to fold it again.
-      assert.equals("▾ Decisions (1) d", current())
+      assert.equals(" ▾ Decisions 1  d ", current())
       local folds = notes.paths(record).claude_folds
       assert.same({ decisions = true }, vim.json.decode(H.read(folds)))
       -- The pane shows it open too.
@@ -503,7 +503,7 @@ describe("notes", function()
       end
       click_on "PR #231"
       assert.same({ "https://github.com/cloud/console/pull/231" }, opened)
-      click_on "Details (1)"
+      click_on "Details 1"
       assert.is_not_nil(line_with(view_lines(), "  - Branch SD-494-signin"))
       -- Beside a link, past its title, nothing happens.
       local row, line = line_with(view_lines(), "In development")
@@ -515,7 +515,7 @@ describe("notes", function()
       notes.set_fold(record.note_id, "details", true)
       notes.redraw()
       open_view()
-      assert.is_not_nil(line_with(view_lines(), "▾ Details (1) t"))
+      assert.is_not_nil(line_with(view_lines(), "▾ Details 1  t"))
       keys "q"
       assert.same({}, notes.folds "20261029-else")
       assert.same({ details = true }, notes.folds(record.note_id))
