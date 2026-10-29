@@ -1,5 +1,6 @@
--- lua/floatterm/claude_notes: drawing the sheet, redacting secrets, reading the turn
--- from a transcript, and the run's guards, with a fake `claude` (never the real one).
+-- lua/floatterm/claude_notes: drawing the dossier and its plain-text copy, reading
+-- older shapes, redacting secrets, reading the turn from a transcript, and the run's
+-- guards, with a fake `claude` (never the real one).
 
 local H = require "test_helpers"
 
@@ -35,31 +36,180 @@ describe("Claude's notes", function()
   end)
 
   describe("render", function()
-    it("works the percentage out from the tasks, half for one under way, rounded down", function()
-      local lines = cn.render { summary = "s", tasks = { task("a", "done"), task("b", "in_progress") } }
-      local _, bar = find_line(lines, "^%[")
-      assert.truthy(bar:find " 75%%$")
-      lines = cn.render { summary = "s", tasks = { task("a", "done"), task("b", "pending"), task("c", "blocked") } }
-      _, bar = find_line(lines, "^%[")
-      assert.truthy(bar:find " 33%%$")
+    -- A session as Claude would describe it, in the current shape.
+    local function dossier()
+      return {
+        title = "SD-494 · Console partner sign-in",
+        summary = "Partner sign-in through Cognito",
+        now = "Task 1: schema, model and factory",
+        hashtags = { "identity", "cognito", "signin", "runbook" },
+        tasks = {
+          task("Design spec approved", "done"),
+          task("Task 1: schema, model and factory", "in_progress", "Sonnet implementing"),
+          task("Tasks 2–13", "pending"),
+          task("Confirm COGNITO_ACCOUNTS spelling", "blocked", "not settled"),
+        },
+        links = {
+          {
+            title = "SD-494 · this session's ticket",
+            url = "https://x.atlassian.net/browse/SD-494",
+            note = "In development",
+          },
+          { title = "SD-540 · console sign-in", url = "https://x.atlassian.net/browse/SD-540", note = "Created" },
+          { title = "PR #231 cloud/console", url = "https://github.com/cloud/console/pull/231", note = "Opened" },
+          { title = "PR #228 cloud/idp-api", url = "https://github.com/cloud/idp-api/pull/228", note = "Reviewing" },
+        },
+        decisions = { "one", "two", "three", "four", "five", "six" },
+        details = { "a", "b", "c", "d", "e" },
+      }
+    end
+
+    -- The display column `word` starts at in `line`.
+    local function col(line, word)
+      local at = line:find(word, 1, true)
+      return at and vim.fn.strdisplaywidth(line:sub(1, at - 1)) or nil
+    end
+
+    it("draws the dossier at 80 columns", function()
+      local lines = cn.render(dossier(), { width = 80, status = "working" })
+      assert.same({
+        " ✳ SD-494 · Console partner sign-in",
+        " ◌ working · Task 1: schema, model and factory               ▕████▊░░░░░░░░▏ 37%",
+        " #identity #cognito #signin #runbook",
+        "",
+        " LINKS",
+        "  SD-494 · this session's ticket  In development",
+        "  SD-540 · console sign-in        Created",
+        "  PR #231 cloud/console           Opened",
+        "  PR #228 cloud/idp-api           Reviewing",
+        "",
+        " PLAN",
+        "  ✓ Design spec approved",
+        "  ▸ Task 1: schema, model and factory  Sonnet implementing",
+        "  · Tasks 2–13",
+        "  ! Confirm COGNITO_ACCOUNTS spelling  blocked: not settled",
+        "",
+        " ▸ Decisions (6) d   ▸ Details (5) t",
+      }, lines)
     end)
 
-    it("draws the bar to the width it's given, with a minimum", function()
-      local data = { summary = "s", tasks = { task("a", "done"), task("b", "pending") } }
-      local _, bar = find_line(cn.render(data, { width = 60 }), "^%[")
-      assert.equals(60, vim.fn.strdisplaywidth(bar))
-      _, bar = find_line(cn.render(data), "^%[")
-      assert.equals(42, vim.fn.strdisplaywidth(bar))
-      _, bar = find_line(cn.render(data, { width = 5 }), "^%[")
-      assert.equals(10 + 2 + 4, vim.fn.strdisplaywidth(bar))
+    for _, width in ipairs { 40, 80, 120 } do
+      it("fits " .. width .. " columns, with the bar at the right end and the columns lined up", function()
+        local lines = cn.render(dossier(), { width = width, status = "working" })
+        for _, line in ipairs(lines) do
+          assert.is_true(vim.fn.strdisplaywidth(line) <= width, line)
+          assert.is_nil(line:find "%s$", "trailing space: " .. line)
+        end
+        assert.equals(" ✳ SD-494 · Console partner sign-in", lines[1])
+        assert.truthy(lines[2]:find "^ ◌ working · ")
+        assert.truthy(lines[2]:find "▏ 37%%$")
+        assert.equals(width, vim.fn.strdisplaywidth(lines[2]))
+        assert.equals(" #identity #cognito #signin #runbook", lines[3])
+
+        -- Every note starts in one column, and so does every detail.
+        local notes_at = {}
+        for _, note in ipairs { "In development", "Created", "Opened", "Reviewing" } do
+          local _, line = find_line(lines, note, 1, true)
+          table.insert(notes_at, col(line, note))
+        end
+        assert.equals(1, #vim.fn.uniq(vim.fn.sort(notes_at)), vim.inspect(notes_at))
+        local _, doing = find_line(lines, "^  ▸ ")
+        local _, blocked = find_line(lines, "^  ! ")
+        assert.equals(col(blocked, "blocked:"), col(doing, "Sonnet"))
+        assert.is_not_nil(find_line(lines, "^ ▸ Decisions %(6%) d   ▸ Details %(5%) t$"))
+      end)
+    end
+
+    it("cuts names and notes with … to fit a narrow pane", function()
+      local lines = cn.render(dossier(), { width = 40, status = "working" })
+      local _, doing = find_line(lines, "^  ▸ ")
+      assert.equals("  ▸ Task 1: schema, mo…  Sonnet impleme…", doing)
+      local _, ticket = find_line(lines, "^  SD%-494")
+      assert.equals("  SD-494 · this session…  In development", ticket)
+    end)
+
+    it("uses no emoji, only symbols one cell wide", function()
+      local data = dossier()
+      for i = 1, 5 do
+        table.insert(data.tasks, task("more " .. i, "done"))
+      end
+      local lines = cn.render(data, { width = 80, status = "needs_you", needs_you = "Allow Bash?" })
+      vim.list_extend(lines, (cn.render(dossier(), { width = 80, status = "done", open = { decisions = true } })))
+      for _, line in ipairs(lines) do
+        -- One cell per character: an emoji is two, and won't line up.
+        assert.equals(vim.fn.strchars(line), vim.fn.strdisplaywidth(line), line)
+        for _, code in ipairs(vim.fn.str2list(line)) do
+          assert.is_false(code >= 0x1F000 or (code >= 0x2600 and code <= 0x26FF), line)
+        end
+      end
+    end)
+
+    it("shows link titles as links and keeps the URL out of the text", function()
+      local lines, highlights, targets = cn.render(dossier(), { width = 80 })
+      for _, line in ipairs(lines) do
+        assert.is_nil(line:find("https://", 1, true), line)
+      end
+      local links = vim.tbl_filter(function(t)
+        return t.kind == "link"
+      end, targets)
+      assert.equals(4, #links)
+      assert.equals("https://github.com/cloud/console/pull/231", links[3].url)
+      assert.equals("PR #231 cloud/console", lines[links[3].line + 1]:sub(links[3].col + 1, links[3].end_col))
+      local styled = vim.tbl_filter(function(hl)
+        return hl.line == links[3].line and hl.group == "FloatTermNotesLink"
+      end, highlights)
+      assert.equals(1, #styled)
+      assert.equals(links[3].col, styled[1].col)
+    end)
+
+    it("folds decisions and details by default, and shows the open ones under the toggles", function()
+      local lines, _, targets = cn.render(dossier(), { width = 80 })
+      assert.is_nil(find_line(lines, "three"))
+      local folds = vim.tbl_filter(function(t)
+        return t.kind == "fold"
+      end, targets)
+      assert.same({ "decisions", "details" }, { folds[1].name, folds[2].name })
+      assert.equals(folds[1].line, folds[2].line)
+      assert.equals("▸ Details (5) t", lines[folds[2].line + 1]:sub(folds[2].col + 1, folds[2].end_col))
+
+      lines = cn.render(dossier(), { width = 80, open = { details = true } })
+      local toggles = find_line(lines, "Details %(5%)")
+      assert.equals(" ▸ Decisions (6) d   ▾ Details (5) t", lines[toggles])
+      assert.same({ "", " DETAILS", "  - a", "  - b" }, vim.list_slice(lines, toggles + 1, toggles + 4))
+      assert.is_nil(find_line(lines, "three"))
+    end)
+
+    it("wraps long decisions under their dash, and puts the toggles on a line each when narrow", function()
+      local data = dossier()
+      data.decisions = { "Use one Cognito pool per region rather than one per partner" }
+      local lines = cn.render(data, { width = 30, open = { decisions = true } })
+      assert.is_not_nil(find_line(lines, "^ ▾ Decisions %(1%) d$"))
+      assert.is_not_nil(find_line(lines, "^ ▸ Details %(5%) t$"))
+      local i = find_line(lines, "^  %- Use one")
+      assert.truthy(lines[i + 1]:find "^    %S")
+      for _, line in ipairs(lines) do
+        assert.is_true(vim.fn.strdisplaywidth(line) <= 30, line)
+      end
+    end)
+
+    it("leaves out sections with nothing in them", function()
+      local lines = cn.render { title = "t", tasks = {}, links = {}, decisions = {}, details = {} }
+      assert.same({ " ✳ t" }, lines)
+    end)
+
+    it("works the percentage out from the tasks, half for one under way, rounded down", function()
+      local lines = cn.render { tasks = { task("a", "done"), task("b", "in_progress") } }
+      assert.is_not_nil(find_line(lines, " 75%%$"))
+      lines = cn.render { tasks = { task("a", "done"), task("b", "pending"), task("c", "blocked") } }
+      assert.is_not_nil(find_line(lines, " 33%%$"))
     end)
 
     it("colours the bar green, blue while one is under way, red if one is blocked", function()
       local function colour(tasks)
-        local lines, highlights = cn.render { summary = "s", tasks = tasks }
-        local row = find_line(lines, "^%[") - 1
+        local lines, highlights = cn.render { now = "x", tasks = tasks }
+        local row = find_line(lines, "▏ %d+%%$") - 1
         for _, hl in ipairs(highlights) do
-          if hl.line == row and hl.col == 1 then
+          if hl.line == row and hl.group:match "^Diagnostic" then
             return hl.group
           end
         end
@@ -69,110 +219,129 @@ describe("Claude's notes", function()
       assert.equals("DiagnosticError", colour { task("a", "in_progress"), task("b", "blocked") })
     end)
 
-    it("folds done tasks into one line past six", function()
-      local tasks = {}
-      for i = 1, 4 do
-        table.insert(tasks, task("done " .. i, "done"))
-      end
-      vim.list_extend(
-        tasks,
-        { task("now", "in_progress", "writing"), task("next", "pending"), task("later", "pending") }
-      )
-      local lines = cn.render { summary = "s", tasks = tasks }
-      assert.is_not_nil(find_line(lines, "├─ 🟢 4 done$"))
-      assert.is_nil(find_line(lines, "done 1"))
-      local _, now = find_line(lines, " now ")
-      assert.truthy(now:find("IN PROGRESS (writing)", 1, true))
-      assert.is_not_nil(find_line(lines, "└─ ⚪ later"))
-    end)
-
-    it("cuts long task names so every state starts in one column", function()
-      local lines = cn.render({
-        summary = "s",
-        tasks = { task(string.rep("very long task name ", 4), "done"), task("short", "pending") },
-      }, { width = 42 })
-      local _, long = find_line(lines, "…")
-      local _, short = find_line(lines, "short")
-      assert.is_true(vim.fn.strdisplaywidth(long) <= 42)
-      local col = function(line, word)
-        return vim.fn.strdisplaywidth(line:sub(1, line:find(word, 1, true) - 1))
-      end
-      assert.equals(col(long, "DONE"), col(short, "PENDING"))
-    end)
-
-    it("only lists links with a real URL, and leaves out an empty section", function()
-      local lines = cn.render {
-        summary = "s",
-        prs = { { url = "https://github.com/o/r/pull/1", title = "the fix" }, { url = "PR 2", title = "no link" } },
-        links = { { url = "ticket SD-1", title = "jira" } },
-      }
-      assert.is_not_nil(find_line(lines, "^%- the fix: https://github.com/o/r/pull/1$"))
-      assert.is_nil(find_line(lines, "no link"))
-      assert.is_nil(find_line(lines, "^# Key links"))
-    end)
-
-    it("shows what Claude is asking above the bar, and tidies hashtags", function()
+    it("shows what Claude is asking in place of what it's doing, and tidies hashtags", function()
       local lines, highlights = cn.render({
-        summary = "s",
+        title = "t",
+        now = "writing",
         hashtags = { "#auth", "two words" },
         tasks = { task("a", "pending") },
-      }, { needs_you = "Allow   Bash?" })
-      assert.equals("#auth #two-words", lines[3])
-      local i = find_line(lines, "^● Needs you: Allow Bash%?$")
-      assert.is_not_nil(i)
-      assert.truthy(lines[i + 1]:find "^%[")
-      assert.equals("FloatTermNeedsYou", highlights[1].group)
+      }, { width = 60, status = "needs_you", needs_you = "Allow   Bash?" })
+      assert.truthy(lines[2]:find "^ ● Allow Bash%? +▕")
+      assert.is_nil(lines[2]:find("writing", 1, true))
+      assert.equals(" #auth #two-words", lines[3])
+      local asking = vim.tbl_filter(function(hl)
+        return hl.line == 1 and hl.group == "FloatTermNeedsYou"
+      end, highlights)
+      assert.equals(1, #asking)
+      lines = cn.render({ title = "t", now = "writing" }, { status = "needs_you", needs_you = "" })
+      assert.equals(" ● needs you", lines[2])
     end)
 
-    it("keeps names, details, link titles and detail lines on one line each", function()
-      local lines = cn.render {
-        summary = "first\nsecond",
-        tasks = { task("fix\nlogin", "in_progress", "reading\nlogs") },
-        prs = { { url = "https://github.com/o/r/pull/1", title = "the\nfix" } },
-        details = { "one\ntwo" },
-      }
-      for i, line in ipairs(lines) do
-        if i ~= 2 then
-          assert.is_nil(line:find("\n", 1, true), line)
-        end
-      end
-      assert.is_not_nil(find_line(lines, "fix login"))
-      assert.is_not_nil(find_line(lines, "(reading logs)", 1, true))
-      assert.is_not_nil(find_line(lines, "^%- the fix: "))
-      assert.is_not_nil(find_line(lines, "^%- one two$"))
-    end)
-
-    it("shows at most six task rows, the rest as a count", function()
+    it("folds done tasks into one row past six, and shows at most six task rows", function()
       local tasks = { task("d1", "done"), task("d2", "done") }
       for i = 1, 10 do
-        table.insert(tasks, task("task " .. i, "pending"))
+        table.insert(tasks, task("task " .. i, i == 1 and "in_progress" or "pending", i == 1 and "writing" or nil))
       end
-      local lines = cn.render { summary = "s", tasks = tasks }
-      local rows = vim.tbl_filter(function(line)
-        return line:find "^  ├─" ~= nil or line:find "^  └─" ~= nil
-      end, lines)
-      assert.equals(6, #rows)
-      assert.truthy(rows[1]:find("2 done", 1, true))
-      assert.truthy(rows[2]:find("task 1", 1, true))
-      assert.truthy(rows[6]:find("… 6 more", 1, true))
-      assert.is_nil(find_line(lines, "task 5"))
+      local lines = cn.render { tasks = tasks }
+      local plan = find_line(lines, "^ PLAN$")
+      local rows = vim.list_slice(lines, plan + 1, plan + 6)
+      assert.equals("  ✓ 2 done", rows[1])
+      assert.truthy(rows[2]:find "^  ▸ task 1 +writing$", rows[2])
+      assert.equals("  · 6 more", rows[6])
+      assert.is_nil(lines[plan + 7])
+      assert.is_nil(find_line(lines, "d1"))
     end)
 
-    it("cuts a long detail so its row fits a narrow pane", function()
-      local lines = cn.render({
-        summary = "s",
-        tasks = { task("deploy", "in_progress", "waiting on the pipeline to finish its checks") },
-      }, { width = 44 })
-      local _, row = find_line(lines, "deploy")
-      assert.is_true(vim.fn.strdisplaywidth(row) <= 44, row)
-      assert.truthy(row:find("…)", 1, true), row)
+    it("keeps names, notes and items on one line each", function()
+      local lines = cn.render {
+        title = "a\nb",
+        tasks = { task("fix\nlogin", "in_progress", "reading\nlogs") },
+        links = { { url = "https://github.com/o/r/pull/1", title = "the\nfix", note = "Opened\nnow" } },
+        details = { "one\ntwo" },
+      }
+      for _, line in ipairs(lines) do
+        assert.is_nil(line:find("\n", 1, true), line)
+      end
+      assert.is_not_nil(find_line(lines, "fix login +reading logs"))
+      assert.is_not_nil(find_line(lines, "the fix +Opened now"))
     end)
 
-    it("leaves no double blank line without a summary", function()
-      local lines = cn.render { summary = "", tasks = { task("a", "pending") } }
-      for i = 2, #lines do
-        assert.is_false(lines[i] == "" and lines[i - 1] == "", "blank lines at " .. i)
-      end
+    it("reads older shapes: PRs and links without notes, no title, now or decisions", function()
+      local old = {
+        summary = "Fixing login\nsecond line",
+        hashtags = { "auth" },
+        tasks = { task("fix", "in_progress", "reading logs") },
+        prs = { { url = "https://github.com/o/r/pull/1", title = "the fix" }, { url = "PR 2", title = "no link" } },
+        links = { { url = "https://jira.example.com/browse/SD-1", title = "ticket" }, { url = "SD-2", title = "x" } },
+        details = { "- branch SD-1-login" },
+      }
+      local data = cn.normalise(old)
+      assert.equals("Fixing login", data.title)
+      assert.equals("fix", data.now)
+      assert.same({}, data.decisions)
+      assert.same({ "https://github.com/o/r/pull/1", "https://jira.example.com/browse/SD-1" }, {
+        data.links[1].url,
+        data.links[2].url,
+      })
+      local lines = cn.render(old, { width = 60, status = "working" })
+      assert.equals(" ✳ Fixing login", lines[1])
+      assert.truthy(lines[2]:find "^ ◌ working · fix ")
+      assert.is_not_nil(find_line(lines, "^  the fix$"))
+      assert.is_not_nil(find_line(lines, "^  ticket$"))
+      assert.is_not_nil(find_line(lines, "^ ▸ Details %(1%) t$"))
+      assert.is_nil(find_line(lines, "no link"))
+      assert.is_nil(find_line(lines, "Decisions"))
+    end)
+  end)
+
+  describe("the plain-text copy", function()
+    it("writes the same content with the URLs out, for Claude in the tab", function()
+      local text = cn.text {
+        title = "SD-494 · Console partner sign-in",
+        summary = "Partner sign-in",
+        now = "Task 1",
+        hashtags = { "identity" },
+        tasks = {
+          task("Design", "done"),
+          task("Task 1", "in_progress", "Sonnet implementing"),
+          task("Rest", "pending"),
+        },
+        links = {
+          { title = "PR #231 cloud/console", url = "https://github.com/cloud/console/pull/231", note = "Opened" },
+          { title = "Runbook", url = "https://wiki.example.com/runbook", note = "" },
+        },
+        decisions = { "One pool per region" },
+        details = { "Branch SD-494-signin" },
+      }
+      assert.equals(
+        table.concat({
+          "SD-494 · Console partner sign-in",
+          "Partner sign-in",
+          "Now: Task 1",
+          "#identity",
+          "",
+          "Links",
+          "- PR #231 cloud/console (Opened): https://github.com/cloud/console/pull/231",
+          "- Runbook: https://wiki.example.com/runbook",
+          "",
+          "Plan (50% done)",
+          "- [done] Design",
+          "- [in progress] Task 1: Sonnet implementing",
+          "- [pending] Rest",
+          "",
+          "Decisions",
+          "- One pool per region",
+          "",
+          "Details",
+          "- Branch SD-494-signin",
+        }, "\n"),
+        text
+      )
+    end)
+
+    it("writes an older shape's PRs and links too", function()
+      local text = cn.text { summary = "s", prs = { { url = "https://github.com/o/r/pull/1", title = "fix" } } }
+      assert.truthy(text:find("- fix: https://github.com/o/r/pull/1", 1, true))
     end)
   end)
 
@@ -295,11 +464,13 @@ describe("Claude's notes", function()
           result = "ok",
           total_cost_usd = 0.001,
           structured_output = {
+            title = "SD-1 · Login",
             summary = "Fixing login",
+            now = "Writing the fix",
             hashtags = { "auth" },
             tasks = { { name = "fix", state = "done" } },
-            prs = {},
-            links = {},
+            links = { { title = "PR #1 o/r", url = "https://github.com/o/r/pull/1", note = "Opened" } },
+            decisions = {},
             details = {},
           },
         }
@@ -364,7 +535,9 @@ exit "$(cat "$L/code")"]]):format(log)
       cn.refresh(record)
       idle(record)
       local md = notes.dir() .. "/20261029-test.claude.md"
-      assert.truthy(H.read(md):find("Fixing login", 1, true))
+      -- The .md is plain text with the URLs written out.
+      assert.truthy(H.read(md):find "^SD%-1 · Login\nFixing login\nNow: Writing the fix\n")
+      assert.truthy(H.read(md):find "\n%- PR #1 o/r %(Opened%): https://github%.com/o/r/pull/1\n")
       assert.equals("Fixing login", vim.json.decode(H.read(cn.data_path(md))).summary)
       assert.equals("20261029-test", changed)
 

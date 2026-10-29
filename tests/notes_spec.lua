@@ -1,5 +1,6 @@
 -- lua/floatterm/notes: where notes live, switching them on and off, the captures,
--- never deleting notes for you, Claude's pop-up, sharing with another nvim, and the
+-- never deleting notes for you, Claude's pop-up, Claude's dossier in the pane and the
+-- large view (links, folds and their state), sharing with another nvim, and the
 -- picker's filtering.
 
 local H = require "test_helpers"
@@ -351,6 +352,180 @@ describe("notes", function()
     end)
   end)
 
+  describe("Claude's dossier in the pane and the large view", function()
+    local buf, record, opened
+
+    local DOSSIER = {
+      title = "SD-494 · Console partner sign-in",
+      summary = "Partner sign-in",
+      now = "Task 1",
+      hashtags = { "identity" },
+      tasks = { { name = "Task 1", state = "in_progress", detail = "Sonnet implementing" } },
+      links = {
+        {
+          title = "SD-494 · this session's ticket",
+          url = "https://x.atlassian.net/browse/SD-494",
+          note = "In development",
+        },
+        { title = "PR #231 cloud/console", url = "https://github.com/cloud/console/pull/231", note = "Opened" },
+      },
+      decisions = { "One pool per region" },
+      details = { "Branch SD-494-signin" },
+    }
+
+    local function view_lines()
+      return api.nvim_buf_get_lines(0, 0, -1, false)
+    end
+
+    local function line_with(lines, text)
+      for i, line in ipairs(lines) do
+        if line:find(text, 1, true) then
+          return i, line
+        end
+      end
+    end
+
+    local function pane_text()
+      notes.redraw()
+      return table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(notes.state().claude), 0, -1, false), "\n")
+    end
+
+    -- What the large view highlights as the current link or toggle.
+    local function current()
+      local ns = api.nvim_get_namespaces().floatterm_claude_view
+      local marks = api.nvim_buf_get_extmarks(0, ns, 0, -1, { details = true })
+      assert.equals(1, #marks)
+      local mark = marks[1]
+      return api.nvim_buf_get_lines(0, mark[2], mark[2] + 1, false)[1]:sub(mark[3] + 1, mark[4].end_col)
+    end
+
+    local function open_view()
+      api.nvim_set_current_win(notes.state().mine)
+      vim.cmd "stopinsert"
+      notes.read_claude()
+      return api.nvim_get_current_win()
+    end
+
+    before_each(function()
+      buf = H.sleep_tab { label = "api", kind = "claude" }
+      ft.update(buf, { status = "working" })
+      notes.set(buf, true)
+      record = ft.record(buf)
+      H.write(notes.paths(record).claude_json, vim.json.encode(DOSSIER))
+      opened = {}
+      H.stub(vim.ui, "open", function(url)
+        table.insert(opened, url)
+      end)
+    end)
+
+    it("shows the dossier read-only in the pane at its width, folds as one line", function()
+      local text = pane_text()
+      local width = api.nvim_win_get_width(notes.state().claude)
+      for _, line in ipairs(vim.split(text, "\n")) do
+        assert.is_true(vim.fn.strdisplaywidth(line) <= width, line)
+      end
+      assert.truthy(text:find("✳ SD-494 · Console partner sign-in", 1, true))
+      assert.truthy(text:find("◌ working · Task 1", 1, true))
+      assert.truthy(text:find("PR #231 cloud/console", 1, true))
+      assert.is_nil(text:find("https://", 1, true))
+      assert.truthy(text:find("▸ Decisions (1) d   ▸ Details (1) t", 1, true))
+      assert.is_nil(text:find("One pool per region", 1, true))
+      assert.is_false(vim.bo[api.nvim_win_get_buf(notes.state().claude)].modifiable)
+    end)
+
+    it("Tab and Shift+Tab move between the links and the toggles, the current one highlighted", function()
+      notes.redraw()
+      open_view()
+      local seen = {}
+      for _ = 1, 4 do
+        keys "<Tab>"
+        table.insert(seen, current())
+      end
+      assert.same({
+        "SD-494 · this session's ticket",
+        "PR #231 cloud/console",
+        "▸ Decisions (1) d",
+        "▸ Details (1) t",
+      }, seen)
+      keys "<Tab>"
+      assert.equals("SD-494 · this session's ticket", current())
+      keys "<S-Tab>"
+      assert.equals("▸ Details (1) t", current())
+    end)
+
+    it("Enter opens a link in the browser, or opens and folds a fold, remembered for the note", function()
+      notes.redraw()
+      open_view()
+      keys "<Tab><Tab><CR>"
+      assert.same({ "https://github.com/cloud/console/pull/231" }, opened)
+      keys "<Tab><CR>"
+      local lines = view_lines()
+      assert.is_not_nil(line_with(lines, "▾ Decisions (1) d"))
+      assert.is_not_nil(line_with(lines, "  - One pool per region"))
+      -- Still on the toggle, to fold it again.
+      assert.equals("▾ Decisions (1) d", current())
+      local folds = notes.paths(record).claude_folds
+      assert.same({ decisions = true }, vim.json.decode(H.read(folds)))
+      -- The pane shows it open too.
+      H.flush(50)
+      assert.truthy(pane_text():find("One pool per region", 1, true))
+      keys "<CR>"
+      assert.is_nil(line_with(view_lines(), "One pool per region"))
+      assert.same(vim.empty_dict(), vim.json.decode(H.read(folds)))
+    end)
+
+    it("d and t open and fold Decisions and Details from anywhere", function()
+      notes.redraw()
+      open_view()
+      keys "t"
+      assert.is_not_nil(line_with(view_lines(), "  - Branch SD-494-signin"))
+      keys "d"
+      assert.is_not_nil(line_with(view_lines(), "  - One pool per region"))
+      keys "t"
+      assert.is_nil(line_with(view_lines(), "Branch SD-494-signin"))
+      assert.same({ decisions = true }, vim.json.decode(H.read(notes.paths(record).claude_folds)))
+    end)
+
+    it("a click on a link opens it and one on a toggle opens the fold", function()
+      notes.redraw()
+      local win = open_view()
+      -- Headless nvim has no screen to place a real click on, so the click's position
+      -- is given as nvim would report it.
+      local function click(row, column)
+        H.stub(vim.fn, "getmousepos", function()
+          return { winid = win, line = row, column = column }
+        end)
+        keys "<LeftRelease>"
+      end
+      local function click_on(text)
+        local row, line = line_with(view_lines(), text)
+        click(row, vim.fn.strdisplaywidth(line:sub(1, line:find(text, 1, true) - 1)) + 2)
+      end
+      click_on "PR #231"
+      assert.same({ "https://github.com/cloud/console/pull/231" }, opened)
+      click_on "Details (1)"
+      assert.is_not_nil(line_with(view_lines(), "  - Branch SD-494-signin"))
+      -- Beside a link, past its title, nothing happens.
+      local row, line = line_with(view_lines(), "In development")
+      click(row, vim.fn.strdisplaywidth(line))
+      assert.equals(1, #opened)
+    end)
+
+    it("keeps fold state per note, and opens with it", function()
+      notes.set_fold(record.note_id, "details", true)
+      notes.redraw()
+      open_view()
+      assert.is_not_nil(line_with(view_lines(), "▾ Details (1) t"))
+      keys "q"
+      assert.same({}, notes.folds "20261029-else")
+      assert.same({ details = true }, notes.folds(record.note_id))
+      -- Deleting the note takes its fold state with it.
+      local folds = notes.paths(record).claude_folds
+      notes.delete(record.note_id)
+      assert.is_false(H.exists(folds))
+    end)
+  end)
+
   describe("shared with another nvim", function()
     it("picks up what the other nvim saved when you come back to the notes", function()
       local buf = H.sleep_tab { label = "api" }
@@ -461,6 +636,15 @@ describe("notes", function()
       end
       assert.same({ "20261028-aaaa" }, matches "#deploy")
       assert.same({ "20261029-bbbb" }, matches "writing docs")
+      -- Claude's title and what it's doing are searched too.
+      H.write(
+        dir .. "/20261028-aaaa.claude.json",
+        vim.json.encode { title = "SD-494 · Partner sign-in", now = "Seeding users", summary = "s" }
+      )
+      list = notes.list()
+      assert.equals("SD-494 · Partner sign-in", list[2].claude_title)
+      assert.same({ "20261028-aaaa" }, matches "SD-494")
+      assert.same({ "20261028-aaaa" }, matches "seeding")
     end)
   end)
 end)

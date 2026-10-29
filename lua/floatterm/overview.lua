@@ -1,11 +1,13 @@
 -- Every Claude tab in this nvim in one picker, whatever folder or worktree each is in.
 --
 -- A row is the tab's state as the tab bar shows it, its name, its folder (the
--- worktree's, when it's in one) and the first line of its Claude notes' summary. Tabs
--- that need you come first, then working, then done, then by name. The preview is the
--- tab's Claude notes at the preview's width, with what it's asking on top while it
--- waits. Enter shows the tab; Ctrl+o opens its PR in the browser (a GitHub pull request
--- link first, else the first link in its PRs).
+-- worktree's, when it's in one) and from its Claude notes the title and what Claude is
+-- doing now (older notes without them: the summary's first line). Tabs that need you
+-- come first, then working, then done, then by name. The preview is the tab's Claude
+-- notes drawn as the notes pane draws them, at the preview's width, with what it's
+-- asking in the header while it waits. Enter shows the tab; Ctrl+o opens its PR in the
+-- browser: the first link whose title or URL looks like a pull request, else the first
+-- link.
 
 local M = {}
 
@@ -66,42 +68,53 @@ local function tidy_url(url)
   return (url:gsub("[%.,;:!%?%)%]>'\"`]+$", ""))
 end
 
-local function is_pr(url)
-  return url:match "^https://github%.com/[^/]+/[^/]+/pull/%d+" ~= nil
+-- A GitHub pull request link, or a title that says it's one ("PR #231 cloud/console").
+local function is_pr(link)
+  return link.url:match "^https?://github%.com/[^/]+/[^/]+/pull/%d+" ~= nil
+    or link.title:match "%f[%w]PR%f[%W]" ~= nil
+    or link.title:lower():find("pull request", 1, true) ~= nil
 end
 
--- The PR to open: the first GitHub pull request link, else the first link. From the
--- data's PRs, else the URLs in the .md's "# PRs" list.
+-- Sections of an old-format or plain-text .md whose URLs are links.
+local LINK_HEADINGS = { "^#%s+PRs", "^#%s+Key links", "^Links$" }
+
+-- The PR to open: the first link that looks like a pull request, else the first link.
+-- From the data's links (older data's PRs first), else the URLs in the .md's link
+-- sections, each line as its title.
 local function first_pr(sheet)
   if not sheet then
     return nil
   end
-  local urls = {}
+  local links = {}
   if sheet.data then
-    for _, pr in ipairs(type(sheet.data.prs) == "table" and sheet.data.prs or {}) do
-      local url = type(pr) == "table" and type(pr.url) == "string" and tidy_url(vim.trim(pr.url)) or ""
-      if url:match "^https?://" then
-        table.insert(urls, url)
-      end
+    for _, link in ipairs(require("floatterm.claude_notes").normalise(sheet.data).links) do
+      table.insert(links, { title = link.title, url = tidy_url(link.url) })
     end
   else
-    local in_prs = false
+    -- A section is its heading and the list right under it.
+    local in_links = false
     for _, line in ipairs(sheet.lines) do
-      if line:match "^#%s" then
-        in_prs = line:match "^#%s+PRs" ~= nil
-      elseif in_prs then
+      if not line:match "^%s*[-*] " then
+        in_links = false
+        for _, heading in ipairs(LINK_HEADINGS) do
+          in_links = in_links or line:match(heading) ~= nil
+        end
+      elseif in_links then
+        -- The line's text without its URLs, so a PR's title is told apart from a link
+        -- mentioned beside it.
+        local title = line:gsub("https?://[^%s<>]+", "")
         for url in line:gmatch "https?://[^%s<>]+" do
-          table.insert(urls, tidy_url(url))
+          table.insert(links, { title = title, url = tidy_url(url) })
         end
       end
     end
   end
-  for _, url in ipairs(urls) do
-    if is_pr(url) then
-      return url
+  for _, link in ipairs(links) do
+    if is_pr(link) then
+      return link.url
     end
   end
-  return urls[1]
+  return links[1] and links[1].url
 end
 
 -- Every Claude tab, in the order the picker lists them.
@@ -109,7 +122,14 @@ function M.list()
   local items = {}
   for _, record in ipairs(floatterm().tabs()) do
     if record.kind == "claude" then
-      local summary = record.note_id and select(1, require("floatterm.notes").claude_summary(record.note_id)) or ""
+      local summary = ""
+      if record.note_id then
+        local first, _, claude = require("floatterm.notes").claude_summary(record.note_id)
+        local parts = vim.tbl_filter(function(part)
+          return part ~= ""
+        end, { claude.title, claude.now })
+        summary = #parts > 0 and table.concat(parts, " · ") or first
+      end
       table.insert(items, {
         record = record,
         name = floatterm().name(record),
@@ -128,22 +148,24 @@ function M.list()
   return items
 end
 
--- The preview's lines and highlights at `width`: what Claude is asking (while it waits)
--- on top, then its notes drawn as the notes pane draws them, PRs included.
+-- The preview's lines and highlights at `width`: its notes drawn as the notes pane
+-- draws them, with the tab's state (what Claude is asking, while it waits) in the
+-- header. An old-format sheet or none has what it's asking on top instead.
 function M.preview_lines(item, width)
   local claude_notes = require "floatterm.claude_notes"
   local record = item.record
+  local sheet = sheet_of(record)
+  if sheet and sheet.data then
+    return require("floatterm.notes").claude_preview(record.note_id, width, record)
+  end
   local lines, highlights = {}, {}
   if record.status == "needs_you" then
     local line, group = claude_notes.needs_you_line(record.needs_you_message)
     lines = { line, "" }
     highlights = { { line = 0, col = 0, end_col = #line, group = group } }
   end
-  local sheet = sheet_of(record)
   local body, body_highlights
-  if sheet and sheet.data then
-    body, body_highlights = require("floatterm.notes").split_lines(claude_notes.render(sheet.data, { width = width }))
-  elseif sheet then
+  if sheet then
     body, body_highlights = sheet.lines, {}
   else
     body, body_highlights = { NO_NOTES }, { { line = 0, col = 0, end_col = #NO_NOTES, group = "Comment" } }

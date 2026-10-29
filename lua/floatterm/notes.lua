@@ -6,10 +6,13 @@
 --   <note_id>.md         yours: an ordinary markdown file, saved as you go
 --   <note_id>.claude.md  Claude's, written by lua/floatterm/claude_notes after its turns,
 --                        which then fires User FloatTermClaudeNotesChanged { note_id }
---   <note_id>.claude.json  the data Claude's is drawn from, which the pane draws at its
---                        own width (the .md is drawn at a fixed one), with the status
---                        bar coloured and, while the tab's Claude waits on you, what
---                        it's asking above the bar. A note without one shows the .md.
+--   <note_id>.claude.json  the data Claude's is drawn from: a dossier of the session
+--                        (lua/floatterm/claude_notes M.render) at the pane's own width,
+--                        with the tab's state (what it's asking while it waits on you)
+--                        beside the bar. The .md is the same as plain text, for Claude
+--                        in the tab. A note without a .json shows the .md.
+--   <note_id>.claude.folds.json  which of Claude's folds (decisions, details) are open,
+--                        in the pane and the large view alike. Folded without one.
 -- Switching notes off only hides the pane; the files stay, and lua/floatterm/restore
 -- keeps the note_id with the tab. Notes are never deleted for you: closing a tab or
 -- switching notes off leaves the files, and only Ctrl+d in the picker deletes. The
@@ -25,7 +28,8 @@
 --
 -- Going into yours puts the cursor on an empty line at the end, typing. Claude's part
 -- shows what fits, and its title says how many lines don't; Ctrl+Shift+o in yours
--- shows all of it in a large float to scroll and copy from.
+-- shows all of it in a large float to scroll and copy from, where Tab moves between
+-- its links and folds and Enter opens or toggles them.
 --
 -- Captures go at the end of yours: Y on a selection in a terminal tab, <leader>o y on
 -- a selection in code, <leader>o a for a one-line note. Another nvim may have saved the
@@ -97,7 +101,12 @@ end
 
 local function paths_for(note_id)
   local base = M.dir() .. "/" .. note_id
-  return { mine = base .. ".md", claude = base .. ".claude.md", claude_json = base .. ".claude.json" }
+  return {
+    mine = base .. ".md",
+    claude = base .. ".claude.md",
+    claude_json = base .. ".claude.json",
+    claude_folds = base .. ".claude.folds.json",
+  }
 end
 
 -- A tab's notes files, { mine, claude }, or nil when it has no notes. Makes the folder
@@ -246,27 +255,49 @@ local function needs_you(record)
   return nil
 end
 
--- Lines with a newline in them (a summary Claude wrote over two lines) split into one
--- line each, as a buffer won't take them, with the highlights moved to match.
-function M.split_lines(lines, highlights)
-  local out, moved, first = {}, {}, {}
-  for i, line in ipairs(lines) do
-    first[i - 1] = #out
-    vim.list_extend(out, vim.split(line, "\n", { plain = true }))
+-- Which of Claude's folds are open for a note: { decisions = true, details = true }.
+function M.folds(note_id)
+  local file = note_id and io.open(paths_for(note_id).claude_folds, "r")
+  if not file then
+    return {}
   end
-  for _, hl in ipairs(highlights) do
-    table.insert(moved, vim.tbl_extend("force", hl, { line = first[hl.line] or hl.line }))
+  local text = file:read "*a"
+  file:close()
+  local ok, data = pcall(vim.json.decode, text or "", { luanil = { object = true, array = true } })
+  local open = {}
+  for _, fold in ipairs(require("floatterm.claude_notes").FOLDS) do
+    open[fold.name] = ok and type(data) == "table" and data[fold.name] == true or nil
   end
-  return out, moved
+  return open
 end
 
--- Claude's part as lines and highlights at `width`, and whether there's nothing yet.
-local function claude_lines(sheet, width, record)
+-- Opens or folds one of Claude's folds for a note, and remembers it.
+function M.set_fold(note_id, name, open)
+  local folds = M.folds(note_id)
+  folds[name] = open or nil
+  local path = paths_for(note_id).claude_folds
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  local file = io.open(path, "w")
+  if file then
+    file:write(vim.json.encode(vim.tbl_isempty(folds) and vim.empty_dict() or folds) .. "\n")
+    file:close()
+  end
+end
+
+-- Claude's part as lines, highlights and what can be acted on (links and folds) at
+-- `width`, for the tab `record` (nil for a note no tab has), and whether there's
+-- nothing yet.
+local function claude_lines(sheet, width, record, note_id)
   local claude_notes = require "floatterm.claude_notes"
   local asking = needs_you(record)
   if sheet.data then
-    local lines, highlights = M.split_lines(claude_notes.render(sheet.data, { width = width, needs_you = asking }))
-    return lines, highlights, false
+    local lines, highlights, targets = claude_notes.render(sheet.data, {
+      width = width,
+      status = record and record.status,
+      needs_you = asking,
+      open = M.folds(note_id or (record and record.note_id)),
+    })
+    return lines, highlights, false, targets
   end
   local empty = #sheet.lines == 0
   local lines, highlights = vim.list_extend({}, empty and { CLAUDE_EMPTY } or sheet.lines), {}
@@ -276,7 +307,7 @@ local function claude_lines(sheet, width, record)
     table.insert(lines, 1, line)
     highlights[1] = { line = 0, col = 0, end_col = #line, group = group }
   end
-  return lines, highlights, empty
+  return lines, highlights, empty, {}
 end
 
 -- Claude's part of a note as read from its files: { data } or { lines }. For the
@@ -285,24 +316,25 @@ function M.claude_sheet(note_id)
   return read_sheet(note_id)
 end
 
--- A note's Claude summary (its first line, "" without one) and hashtags (each with its
--- #), from the .json, else from the .md: its first line that isn't a heading or tags,
--- and its line of tags.
+-- Claude's part of a note drawn at `width` as the pane draws it, for the tab `record`
+-- (or nil): its lines and highlights. For lua/floatterm/overview's preview.
+function M.claude_preview(note_id, width, record)
+  local lines, highlights = claude_lines(read_sheet(note_id), width, record, note_id)
+  return lines, highlights
+end
+
+-- A note's Claude summary (its first line, "" without one), hashtags (each with its
+-- #) and { title, now } ("" when it has none), from the .json, else from the .md: its
+-- first line that isn't a heading or tags, and its line of tags.
 function M.claude_summary(note_id)
   local sheet = read_sheet(note_id)
   local summary, tags = "", {}
   if sheet.data then
-    local text = type(sheet.data.summary) == "string" and sheet.data.summary or ""
-    summary = vim.trim(vim.split(vim.trim(text), "\n", { plain = true })[1] or "")
-    for _, tag in ipairs(type(sheet.data.hashtags) == "table" and sheet.data.hashtags or {}) do
-      if type(tag) == "string" then
-        tag = vim.trim(tag):gsub("^#+", ""):gsub("%s+", "-")
-        if tag ~= "" then
-          table.insert(tags, "#" .. tag)
-        end
-      end
-    end
-    return summary, tags
+    local data = require("floatterm.claude_notes").normalise(sheet.data)
+    summary = vim.trim(vim.split(data.summary, "\n", { plain = true })[1] or "")
+    -- The title only when Claude wrote one, not the summary standing in for it.
+    local title = type(sheet.data.title) == "string" and data.title or ""
+    return summary, data.hashtags, { title = title, now = data.now }
   end
   for _, line in ipairs(sheet.lines) do
     line = vim.trim(line)
@@ -315,7 +347,7 @@ function M.claude_summary(note_id)
       summary = line
     end
   end
-  return summary, tags
+  return summary, tags, { title = "", now = "" }
 end
 
 -- Puts lines into a buffer that isn't edited, with their highlights. The lines are only
@@ -345,7 +377,8 @@ local upgrading = {}
 local function claude_stamp(note_id)
   local paths = paths_for(note_id)
   local parts = {}
-  for _, path in ipairs { paths.claude_json, paths.claude } do
+  -- The folds too: another nvim opening one shows here.
+  for _, path in ipairs { paths.claude_json, paths.claude, paths.claude_folds } do
     local stat = vim.uv.fs_stat(path)
     table.insert(parts, stat and (stat.mtime.sec .. "." .. stat.mtime.nsec .. ":" .. stat.size) or "-")
   end
@@ -372,7 +405,13 @@ local function render_claude(note_id, width, record)
   if not (buf and api.nvim_buf_is_valid(buf)) then
     return
   end
-  local lines, highlights, empty = claude_lines(current_sheet(note_id), width, record)
+  local sheet = current_sheet(note_id)
+  local lines, highlights, empty = claude_lines(sheet, width, record, note_id)
+  -- Markdown only for an old-format sheet: the dossier is drawn with its own highlights.
+  local filetype = sheet.data and "" or "markdown"
+  if vim.bo[buf].filetype ~= filetype then
+    vim.bo[buf].filetype = filetype
+  end
   show_lines(buf, lines, highlights)
   vim.b[buf].floatterm_notes_empty = empty
 end
@@ -382,7 +421,6 @@ local function claude_buf(note_id)
   if not (buf and api.nvim_buf_is_valid(buf)) then
     buf = api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
-    vim.bo[buf].filetype = "markdown"
     vim.bo[buf].modifiable = false
     claude_bufs[note_id] = buf
     set_up_buffer(buf, false)
@@ -815,9 +853,70 @@ local function on_escape()
 end
 
 -- Ctrl+Shift+o in your notes: all of Claude's notes for the tab in a large float, to
--- scroll, select and copy from (y copies to the system clipboard). q or Esc goes back
--- to where you were in yours, typing if you were.
+-- scroll, select and copy from (y copies to the system clipboard). Tab and Shift+Tab
+-- move between its links and fold toggles, the one under the cursor highlighted (a
+-- link's URL shows at the bottom). Enter or a click opens a link in the browser, or
+-- opens or folds a fold; d and t open or fold Decisions and Details from anywhere.
+-- Folds are remembered for the note, and the pane follows. q or Esc goes back to
+-- where you were in yours, typing if you were.
 local reading = nil
+local VIEW_NS = api.nvim_create_namespace "floatterm_claude_view"
+local VIEW_KEYS = {
+  " Tab moves · Enter opens · d decisions · t details · q closes · y copies ",
+  " Tab · Enter · d · t · q closes ",
+}
+
+-- The link or fold toggle at (row, col), 0-based. Without `exact`, anywhere on a
+-- link's row counts, and on a row of toggles the nearest one before the column.
+local function target_at(targets, row, col, exact)
+  local on_row, before = {}, nil
+  for _, target in ipairs(targets) do
+    if target.line == row then
+      if col >= target.col and col < target.end_col then
+        return target
+      end
+      table.insert(on_row, target)
+      if target.col <= col then
+        before = target
+      end
+    end
+  end
+  if exact then
+    return nil
+  end
+  return before or on_row[1]
+end
+
+-- The target after (dir 1) or before (dir -1) the cursor, going round.
+local function step(targets, cursor, dir)
+  if #targets == 0 then
+    return nil
+  end
+  local row, col = cursor[1] - 1, cursor[2]
+  local here = target_at(targets, row, col)
+  for i, target in ipairs(targets) do
+    if target == here then
+      return targets[(i - 1 + dir) % #targets + 1]
+    end
+  end
+  local after = function(t)
+    return t.line > row or (t.line == row and t.col > col)
+  end
+  if dir > 0 then
+    for _, target in ipairs(targets) do
+      if after(target) then
+        return target
+      end
+    end
+    return targets[1]
+  end
+  for i = #targets, 1, -1 do
+    if not after(targets[i]) then
+      return targets[i]
+    end
+  end
+  return targets[#targets]
+end
 
 function M.read_claude()
   -- The same key closes it, so pressing it again never stacks a second one.
@@ -850,10 +949,19 @@ function M.read_claude()
   local record = pane.buf and floatterm().record(pane.buf)
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].filetype = "markdown"
-  -- The same drawing as the pane, at the pop-up's width.
-  show_lines(buf, claude_lines(sheet, width, record))
+  if not sheet.data then
+    vim.bo[buf].filetype = "markdown"
+  end
+  -- The same drawing as the pane, at the pop-up's width, with the folds as remembered.
+  local targets = {}
+  local function fill()
+    local lines, highlights, _, found = claude_lines(current_sheet(note_id), width, record, note_id)
+    show_lines(buf, lines, highlights)
+    targets = found
+  end
+  fill()
 
+  local keys = VIEW_KEYS[vim.fn.strdisplaywidth(VIEW_KEYS[1]) <= width and 1 or 2]
   local refreshed = refreshed_at(note_id)
   local config = {
     relative = "editor",
@@ -868,7 +976,7 @@ function M.read_claude()
       refreshed and (" · refreshed " .. refreshed) or ""
     ),
     title_pos = "center",
-    footer = " q or Esc closes · y copies ",
+    footer = keys,
     footer_pos = "center",
     -- Above the pane, even shown over the terminal.
     zindex = 100,
@@ -877,13 +985,83 @@ function M.read_claude()
   reading = win
   -- winfixbuf: a jump (Ctrl+o, which some terminals send for Ctrl+Shift+o) or :e would
   -- otherwise load another file into it and take the close keys with Claude's notes.
-  for option, value in pairs { wrap = true, linebreak = true, cursorline = true, winfixbuf = true } do
+  for option, value in pairs { wrap = true, linebreak = true, cursorline = false, winfixbuf = true } do
     vim.wo[win][option] = value
   end
-  -- As tall as the notes need, up to most of the editor.
-  config.height = math.max(1, math.min(most, api.nvim_win_text_height(win, {}).all))
-  config.row = math.max(0, math.floor((vim.o.lines - config.height) / 2) - 1)
-  api.nvim_win_set_config(win, config)
+  -- As tall as the notes need, up to most of the editor, centred when it opens. A fold
+  -- opened later grows it downwards, so what was clicked stays put.
+  local function fit_height(centre)
+    config.height = math.max(1, math.min(most, api.nvim_win_text_height(win, {}).all))
+    if centre then
+      config.row = math.max(0, math.floor((vim.o.lines - config.height) / 2) - 1)
+    else
+      config.row = math.max(0, math.min(config.row, vim.o.lines - 4 - config.height))
+    end
+    api.nvim_win_set_config(win, config)
+  end
+  fit_height(true)
+
+  -- The target under the cursor highlighted, and a link's URL in the footer.
+  local function mark()
+    if not api.nvim_win_is_valid(win) then
+      return
+    end
+    api.nvim_buf_clear_namespace(buf, VIEW_NS, 0, -1)
+    local at = api.nvim_win_get_cursor(win)
+    local target = target_at(targets, at[1] - 1, at[2])
+    if target then
+      api.nvim_buf_set_extmark(buf, VIEW_NS, target.line, target.col, {
+        end_col = target.end_col,
+        hl_group = "FloatTermNotesCurrent",
+        priority = 300,
+      })
+    end
+    local footer = keys
+    if target and target.kind == "link" then
+      local url = target.url
+      if vim.fn.strdisplaywidth(url) > width - 4 then
+        url = vim.fn.strcharpart(url, 0, width - 5) .. "…"
+      end
+      footer = " " .. url .. " "
+    end
+    if config.footer ~= footer then
+      config.footer = footer
+      api.nvim_win_set_config(win, config)
+    end
+  end
+  local function go(target)
+    if target then
+      api.nvim_win_set_cursor(win, { target.line + 1, target.col })
+      mark()
+    end
+  end
+
+  local function toggle(name)
+    for _, target in ipairs(targets) do
+      if target.kind == "fold" and target.name == name then
+        M.set_fold(note_id, name, not M.folds(note_id)[name])
+        fill()
+        fit_height(false)
+        for _, now in ipairs(targets) do
+          if now.kind == "fold" and now.name == name then
+            go(now)
+          end
+        end
+        -- The pane shows the fold the same way.
+        schedule_redraw()
+        return
+      end
+    end
+  end
+  local function act(target)
+    if not target then
+      return
+    elseif target.kind == "fold" then
+      toggle(target.name)
+    elseif target.url:match "^https?://" then
+      vim.ui.open(target.url)
+    end
+  end
 
   local function back()
     if api.nvim_win_is_valid(win) then
@@ -908,6 +1086,33 @@ function M.read_claude()
   map("n", "<C-S-o>", back)
   map("n", "<C-o>", back)
   map({ "n", "x" }, "y", '"+y')
+  map("n", "<Tab>", function()
+    go(step(targets, api.nvim_win_get_cursor(win), 1))
+  end)
+  map("n", "<S-Tab>", function()
+    go(step(targets, api.nvim_win_get_cursor(win), -1))
+  end)
+  map("n", "<CR>", function()
+    local at = api.nvim_win_get_cursor(win)
+    act(target_at(targets, at[1] - 1, at[2]))
+  end)
+  for _, fold in ipairs(require("floatterm.claude_notes").FOLDS) do
+    map("n", fold.key, function()
+      toggle(fold.name)
+    end)
+  end
+  -- Only a click on the link or toggle itself acts (not beside it), and not the end of
+  -- a drag to select, which is in visual mode.
+  map("n", "<LeftRelease>", function()
+    local mouse = vim.fn.getmousepos()
+    if mouse.winid ~= win or mouse.line < 1 then
+      return
+    end
+    local col = vim.fn.virtcol2col(win, mouse.line, mouse.column) - 1
+    pcall(api.nvim_win_set_cursor, win, { mouse.line, math.max(0, col) })
+    act(target_at(targets, mouse.line - 1, col, true))
+  end)
+  api.nvim_create_autocmd("CursorMoved", { buffer = buf, callback = mark })
   -- Leaving it some other way (a click elsewhere) closes it there.
   api.nvim_create_autocmd("WinLeave", {
     buffer = buf,
@@ -1207,6 +1412,7 @@ function M.delete(note_id)
   os.remove(paths.mine)
   os.remove(paths.claude)
   os.remove(paths.claude_json)
+  os.remove(paths.claude_folds)
 end
 
 local function size_text(bytes)
@@ -1217,7 +1423,8 @@ local function size_text(bytes)
 end
 
 -- Every note of yours in the folder, newest first: { id, path, title, mtime, size, tab,
--- summary, hashtags } (summary and hashtags from Claude's part, see M.claude_summary).
+-- summary, hashtags, claude_title, now } (the last four from Claude's part, see
+-- M.claude_summary).
 function M.list()
   local dir = M.dir()
   local found = {}
@@ -1243,7 +1450,7 @@ function M.list()
           break
         end
       end
-      local summary, hashtags = M.claude_summary(id)
+      local summary, hashtags, claude = M.claude_summary(id)
       table.insert(found, {
         id = id,
         path = path,
@@ -1253,6 +1460,8 @@ function M.list()
         tab = open[id],
         summary = summary,
         hashtags = hashtags,
+        claude_title = claude.title,
+        now = claude.now,
       })
     end
   end
@@ -1335,12 +1544,13 @@ function M.pick()
     local sheet = read_sheet(note.id)
     local lines, highlights = {}, {}
     if sheet.data or #sheet.lines > 0 then
-      lines, highlights = claude_lines(sheet, width, record)
+      lines, highlights = claude_lines(sheet, width, record, note.id)
       vim.list_extend(lines, { "", "── yours " .. string.rep("─", math.max(0, width - 9)) })
       table.insert(highlights, { line = #lines - 1, col = 0, end_col = #lines[#lines], group = "Comment" })
     end
     vim.list_extend(lines, read_lines(note.path) or {})
     api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    -- Markdown for yours; the dossier above is drawn with its own highlights, on top.
     preview_utils.highlighter(buf, "markdown")
     api.nvim_buf_clear_namespace(buf, preview_ns, 0, -1)
     for _, hl in ipairs(highlights) do
@@ -1365,8 +1575,16 @@ function M.pick()
           return {
             value = note,
             path = note.path,
-            -- Typing matches the summary and tags too, so "#deploy" finds a tagged note.
-            ordinal = table.concat({ note.title, note.summary, table.concat(note.hashtags, " "), note.id }, " "),
+            -- Typing matches Claude's title, summary, what it's doing and tags too, so
+            -- "#deploy" finds a tagged note and "SD-494" the note on that ticket.
+            ordinal = table.concat({
+              note.title,
+              note.claude_title,
+              note.summary,
+              note.now,
+              table.concat(note.hashtags, " "),
+              note.id,
+            }, " "),
             display = display,
           }
         end,
