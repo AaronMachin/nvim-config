@@ -65,6 +65,8 @@ local pane = { mine = nil, claude = nil, buf = nil, overlay = false, away = fals
 -- claude_sheets, { data = the .json } or { lines = the .md's }, read when it changes.
 local claude_bufs = {}
 local claude_sheets = {}
+-- The links and toggles drawn in each note's pane, so a click or Enter there acts on them.
+local claude_targets = {}
 -- When each note_id's Claude files were last read, to notice another nvim's write, and
 -- the timer that checks them while Claude's part shows (every M.claude_check_ms).
 local claude_stamps = {}
@@ -200,7 +202,7 @@ local function ensure_note(record)
   return paths
 end
 
-local set_up_buffer, fresh_line
+local set_up_buffer, fresh_line, target_at, schedule_redraw
 
 -- The file's lines as nvim would read them, or nil when it can't be read.
 local function disk_lines(path)
@@ -417,7 +419,8 @@ local function render_claude(note_id, width, record)
     return
   end
   local sheet = current_sheet(note_id)
-  local lines, highlights, empty = claude_lines(sheet, width, record, note_id)
+  local lines, highlights, empty, targets = claude_lines(sheet, width, record, note_id)
+  claude_targets[note_id] = targets or {}
   -- Markdown only for an old-format sheet: the dossier is drawn with its own highlights.
   local filetype = sheet.data and "" or "markdown"
   if vim.bo[buf].filetype ~= filetype then
@@ -436,6 +439,34 @@ local function claude_buf(note_id)
     claude_bufs[note_id] = buf
     set_up_buffer(buf, false)
     load_claude(note_id)
+    -- The same as the large view: Enter or a click on a link opens it, on a toggle opens
+    -- or folds it, on a workstream or "part of" goes to that tab.
+    local function act(target)
+      if not target then
+        return
+      elseif target.kind == "fold" then
+        M.set_fold(note_id, target.name, not M.folds(note_id)[target.name])
+        schedule_redraw()
+      elseif target.kind == "tab" then
+        if not require("floatterm.groups").focus_uid(target.uid) then
+          vim.notify("floatterm: that tab has closed", vim.log.levels.INFO)
+        end
+      elseif target.url and target.url:match "^https?://" then
+        vim.ui.open(target.url)
+      end
+    end
+    vim.keymap.set("n", "<CR>", function()
+      local at = api.nvim_win_get_cursor(0)
+      act(target_at(claude_targets[note_id] or {}, at[1] - 1, at[2]))
+    end, { buffer = buf, desc = "open the link or toggle here" })
+    vim.keymap.set("n", "<LeftRelease>", function()
+      local mouse = vim.fn.getmousepos()
+      if mouse.winid == 0 or api.nvim_win_get_buf(mouse.winid) ~= buf or mouse.line < 1 then
+        return
+      end
+      local col = vim.fn.virtcol2col(mouse.winid, mouse.line, mouse.column) - 1
+      act(target_at(claude_targets[note_id] or {}, mouse.line - 1, col, true))
+    end, { buffer = buf, desc = "open the link or toggle clicked" })
   end
   return buf
 end
@@ -710,7 +741,7 @@ function M.redraw()
 end
 
 local pending = false
-local function schedule_redraw()
+schedule_redraw = function()
   if pending then
     return
   end
@@ -879,7 +910,7 @@ local VIEW_KEYS = {
 
 -- The link or fold toggle at (row, col), 0-based. Without `exact`, anywhere on a
 -- link's row counts, and on a row of toggles the nearest one before the column.
-local function target_at(targets, row, col, exact)
+target_at = function(targets, row, col, exact)
   local on_row, before = {}, nil
   for _, target in ipairs(targets) do
     if target.line == row then
@@ -1429,6 +1460,7 @@ function M.delete(note_id)
     end
   end
   claude_bufs[note_id] = nil
+  claude_targets[note_id] = nil
   claude_sheets[note_id] = nil
   os.remove(paths.mine)
   os.remove(paths.claude)

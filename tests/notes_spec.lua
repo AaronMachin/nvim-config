@@ -511,6 +511,40 @@ describe("notes", function()
       assert.equals(1, #opened)
     end)
 
+    it("in the pane, a click or Enter on a link opens it and one on a toggle opens the fold", function()
+      notes.redraw()
+      local win = notes.state().claude
+      local cbuf = api.nvim_win_get_buf(win)
+      local function pane_lines()
+        return api.nvim_buf_get_lines(cbuf, 0, -1, false)
+      end
+      local function click_on(text)
+        local row, line = line_with(pane_lines(), text)
+        local column = vim.fn.strdisplaywidth(line:sub(1, line:find(text, 1, true) - 1)) + 2
+        H.stub(vim.fn, "getmousepos", function()
+          return { winid = win, line = row, column = column }
+        end)
+        api.nvim_set_current_win(win)
+        keys "<LeftRelease>"
+      end
+      click_on "PR #231"
+      assert.same({ "https://github.com/cloud/console/pull/231" }, opened)
+      click_on "Details 1"
+      H.flush(50)
+      assert.is_not_nil(line_with(pane_lines(), "Branch SD-494-signin"))
+      -- Beside a link, past its title, nothing happens.
+      local row, line = line_with(pane_lines(), "In development")
+      H.stub(vim.fn, "getmousepos", function()
+        return { winid = win, line = row, column = vim.fn.strdisplaywidth(line) }
+      end)
+      keys "<LeftRelease>"
+      assert.equals(1, #opened)
+      local link_row = line_with(pane_lines(), "SD-494 · this session's ticket")
+      api.nvim_win_set_cursor(win, { link_row, 0 })
+      keys "<CR>"
+      assert.same("https://x.atlassian.net/browse/SD-494", opened[2])
+    end)
+
     it("keeps fold state per note, and opens with it", function()
       notes.set_fold(record.note_id, "details", true)
       notes.redraw()
