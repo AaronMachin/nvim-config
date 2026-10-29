@@ -32,7 +32,7 @@ Restore and the remembered placement need a fresh nvim per case, so those specs 
 | `menu_spec.lua` | `<leader>o` keys and their descriptions with shortcuts, the panel |
 | `claude_spec.lua` | hook events to record fields, which Claude a tab listens to |
 | `claude_notes_spec.lua` | drawing the sheet, redaction, reading the turn, the run's guards |
-| `notes_spec.lua` | paths, on/off, captures, empty-note cleanup, Claude's pop-up, sharing with another nvim, the picker's filtering |
+| `notes_spec.lua` | paths, on/off, captures (into notes another nvim changed too), notes never deleted for you, Claude's sheet reloading, Claude's pop-up, sharing with another nvim, the picker's filtering |
 | `overview_spec.lua` | the Claude overview's order and preview |
 | `restore_spec.lua` | saved sets per nvim, saving, migration, the picker, another nvim's tabs, the 10-set cap |
 | `grepmask_spec.lua`, `testrun_spec.lua`, `git_spec.lua` (gitkeys, pins), `phpstan_spec.lua`, `dbkeys_spec.lua`, `laravel_spec.lua`, `worktrees_spec.lua` | the smaller modules |

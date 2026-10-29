@@ -8,7 +8,8 @@
 -- short result) and given to `claude -p` with the current sheet, which it rewrites in
 -- the user's shape: a summary with hashtags, a status bar with the tasks, PRs, key
 -- links, details. Anything that looks like a secret
--- (tokens, keys, passwords) is replaced with [redacted] before it's sent. Claude's
+-- (tokens, keys, passwords) is replaced with [redacted] before it's sent; links are
+-- kept, but for the values of parameters such as ?token= in them. Claude's
 -- structured reply is written beside the user's own notes (floatterm.notes.paths) as
 -- <note_id>.claude.json, which the pane draws at its own width, and the sheet as
 -- <note_id>.claude.md at a fixed width, for Claude in the tab to read and as the next
@@ -110,12 +111,18 @@ local WORTH = { done = 1, in_progress = 0.5 }
 local DEFAULT_WIDTH = 42
 local MIN_BAR = 10
 -- More tasks than this and the done ones fold into one line, so the current and next
--- ones stay in view.
+-- ones stay in view. Still more, and the last ones become a count, so no more than
+-- this many task rows show.
 local FOLD_OVER = 6
 local NEEDS_YOU_HL = "FloatTermNeedsYou"
 
 local function text(value)
   return type(value) == "string" and vim.trim(value) or ""
+end
+
+-- On one line: only the summary may span lines.
+local function one_line(value)
+  return (text(value):gsub("%s*\n%s*", " "))
 end
 
 local function width_of(s)
@@ -159,7 +166,10 @@ end
 function M.render(data, opts)
   opts = opts or {}
   local width = math.max(1, opts.width or DEFAULT_WIDTH)
-  local lines, highlights = { "# Summary of chat", text(data.summary) }, {}
+  local lines, highlights = { "# Summary of chat" }, {}
+  if text(data.summary) ~= "" then
+    table.insert(lines, text(data.summary))
+  end
   local function highlight(col, end_col, group)
     table.insert(highlights, { line = #lines - 1, col = col, end_col = end_col, group = group })
   end
@@ -177,6 +187,9 @@ function M.render(data, opts)
   local tasks = vim.tbl_filter(function(task)
     return type(task) == "table" and text(task.name) ~= ""
   end, type(data.tasks) == "table" and data.tasks or {})
+  tasks = vim.tbl_map(function(task)
+    return { name = one_line(task.name), state = task.state, detail = one_line(task.detail) }
+  end, tasks)
   if #tasks > 0 or opts.needs_you then
     vim.list_extend(lines, { "", "# Status" })
   end
@@ -204,12 +217,18 @@ function M.render(data, opts)
     highlight(1, 1 + #full, colour)
     highlight(1 + #full, 1 + #full + #empty, "Comment")
 
-    local shown, folded = tasks, 0
+    local shown, folded, more = tasks, 0, 0
     if #tasks > FOLD_OVER then
       shown = vim.tbl_filter(function(task)
         return task.state ~= "done"
       end, tasks)
       folded = #tasks - #shown
+      -- Room for the folded line and the count, the rest for the first tasks left.
+      local room = FOLD_OVER - (folded > 0 and 1 or 0)
+      if #shown > room then
+        more = #shown - (room - 1)
+        shown = vim.list_slice(shown, 1, room - 1)
+      end
     end
     -- Names are cut so every state starts in one column inside the width: 8 cells for
     -- "  ├─ 🟢 ", a space each side of the dots, at least 2 dots (6 when there's room).
@@ -228,14 +247,23 @@ function M.render(data, opts)
     end
     for _, task in ipairs(shown) do
       local state = STATES[task.state] or STATES.pending
-      local name = fit(text(task.name), column)
+      local name = fit(task.name, column)
       local dots = string.rep(".", column - width_of(name) + least_dots)
-      local detail = text(task.detail)
-      local after = (task.state == "in_progress" or task.state == "blocked")
-          and detail ~= ""
-          and (" (" .. detail .. ")")
-        or ""
-      table.insert(rows, ("%s %s %s %s%s"):format(state[1], name, dots, state[2], after))
+      local row = ("%s %s %s %s"):format(state[1], name, dots, state[2])
+      if (task.state == "in_progress" or task.state == "blocked") and task.detail ~= "" then
+        -- Drawn in a pane, the detail is cut to what's left of the width ("  ├─ " goes
+        -- before the row) so the row doesn't wrap. The .md keeps it whole for Claude.
+        local left = width - 5 - width_of(row) - 3
+        if not opts.width then
+          row = row .. " (" .. task.detail .. ")"
+        elseif left >= 2 then
+          row = row .. " (" .. fit(task.detail, left) .. ")"
+        end
+      end
+      table.insert(rows, row)
+    end
+    if more > 0 then
+      table.insert(rows, ("… %d more"):format(more))
     end
     for i, row in ipairs(rows) do
       table.insert(lines, ("  %s %s"):format(i == #rows and "└─" or "├─", row))
@@ -248,7 +276,7 @@ function M.render(data, opts)
     for _, entry in ipairs(type(entries) == "table" and entries or {}) do
       local url = type(entry) == "table" and text(entry.url) or ""
       if url:match "^https?://" then
-        local title = text(entry.title)
+        local title = one_line(entry.title)
         table.insert(items, "- " .. (title ~= "" and (title .. ": ") or "") .. url)
       end
     end
@@ -263,7 +291,7 @@ function M.render(data, opts)
   local details = {}
   for _, line in ipairs(type(data.details) == "table" and data.details or {}) do
     if text(line) ~= "" then
-      table.insert(details, "- " .. text(line):gsub("^[-*]%s*", ""))
+      table.insert(details, "- " .. one_line(line):gsub("^[-*]%s*", ""))
     end
   end
   if #details > 0 then
@@ -421,10 +449,34 @@ local function redact_values(text)
   )
 end
 
+-- Query (or fragment) parameters whose values are secrets, by a word in their name.
+local SECRET_PARAMS = { "token", "key", "secret", "password", "passwd", "signature" }
+
+-- A link kept whole but for the values of its secret parameters (?token=, a signed
+-- URL's signature), as a document's or design's id looks like a random key.
+local function redact_url(url)
+  return (
+    url:gsub("([?&;#])([^=&;#]+)=([^&;#]*)", function(sep, name, value)
+      local lower = name:lower()
+      for _, word in ipairs(SECRET_PARAMS) do
+        if value ~= "" and lower:find(word, 1, true) then
+          return sep .. name .. "=" .. REDACTED
+        end
+      end
+    end)
+  )
+end
+
 -- Replaces anything that looks like a secret with [redacted]: private keys, auth
 -- headers and bearer tokens, password/secret/token/api key values, AWS, GitHub and
--- Slack keys, JWTs and long random strings. Only ever sees text on its way to Claude.
+-- Slack keys, JWTs and long random strings. Links are set aside first and put back
+-- after, whole but for secret parameters. Only ever sees text on its way to Claude.
 local function redact(text)
+  local urls = {}
+  text = text:gsub("https?://[^%s\"'<>\\`]+", function(url)
+    table.insert(urls, redact_url(url))
+    return "\1" .. #urls .. "\2"
+  end)
   local pem = "%-%-%-%-%-BEGIN[%u ]*PRIVATE KEY%-%-%-%-%-"
   text = text:gsub(pem .. ".-%-%-%-%-%-END[%u ]*PRIVATE KEY%-%-%-%-%-", REDACTED)
   -- One cut off before its end.
@@ -445,6 +497,9 @@ local function redact(text)
     if looks_random(run) then
       return REDACTED
     end
+  end)
+  text = text:gsub("\1(%d+)\2", function(n)
+    return urls[tonumber(n)]
   end)
   return text
 end

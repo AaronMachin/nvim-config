@@ -6,10 +6,15 @@
 -- tabs. It's written as tabs change (a second or two later), every 30 seconds while
 -- there are tabs, when nvim loses focus and on quit, always to a temporary file that
 -- is then renamed over the set, so a crash or power cut loses a couple of seconds at
--- most and never leaves half a set.
+-- most and never leaves half a set. No save waits on `ps` for what each shell runs:
+-- the 30-second one asks the tab bar to find out for the next save.
 --
 -- The set a running nvim owns has <id>.lock beside it, holding its pid and server
--- address. A lock whose pid isn't a running nvim (it crashed) doesn't count.
+-- address. The lock only counts while that pid is a running nvim listening at that
+-- address (a crashed nvim's pid may since belong to another one). A lock is made whole
+-- or not at all, and replacing a crashed nvim's is done by one nvim at a time, so two
+-- nvims never both own a set. An empty lock (from an older version, or cut short)
+-- counts for LOCK_GRACE after it was written.
 --
 -- Starting nvim in the folder:
 --   another nvim there has tabs  asks whether to open the same tabs (a copy, which
@@ -29,8 +34,8 @@
 -- A Claude tab that can't be reopened (its folder is gone, or its resume exits
 -- straight away) is kept in the set and tried once more next time.
 --
--- Opening nvim on a file (as git's editor, say) and nvim without a UI (headless) do
--- none of this.
+-- Opening nvim on a file (as git's editor, say), on stdin (`-`), with a session (-S),
+-- an error file (-q) or a +command, and nvim without a UI (headless) do none of this.
 
 local M = {}
 
@@ -50,6 +55,12 @@ local SAVE_DELAY = 1500
 local SAVE_EVERY = 30000
 -- Sets kept per folder.
 local KEEP = 10
+-- An empty or unreadable lock counts as another nvim's for this long after it was
+-- written, as it may be one being written now.
+local LOCK_GRACE = 3
+-- A claim on replacing a crashed nvim's lock older than this was left by an nvim that
+-- crashed while making it.
+local CLAIM_GRACE = 10
 
 local folder = nil
 local done = false
@@ -73,8 +84,45 @@ local function lock_path(id)
   return folder_dir() .. "/" .. id .. ".lock"
 end
 
+-- Options whose next argument is theirs, not a file.
+local TAKES_ARG = {
+  ["-u"] = true,
+  ["-i"] = true,
+  ["-c"] = true,
+  ["--cmd"] = true,
+  ["--listen"] = true,
+  ["--startuptime"] = true,
+  ["-s"] = true,
+  ["-w"] = true,
+  ["-W"] = true,
+  ["-t"] = true,
+  ["-T"] = true,
+}
+
+-- Whether nvim was started to open something other than a folder: stdin (-), a session
+-- (-S), an error file (-q) or a +command.
+local function opens_something()
+  local argv = vim.v.argv
+  local i = 2
+  while i <= #argv do
+    local arg = argv[i]
+    if arg == "--" then
+      return false
+    elseif TAKES_ARG[arg] then
+      i = i + 1
+    elseif arg == "-" or arg:match "^%-S" or arg:match "^%-q" or arg:match "^%+" then
+      return true
+    end
+    i = i + 1
+  end
+  return false
+end
+
 -- The folder nvim was started in, or nil when it was given files to open.
 local function started_folder()
+  if opens_something() then
+    return nil
+  end
   local argc = vim.fn.argc()
   if argc == 0 then
     return vim.uv.fs_realpath(vim.uv.cwd())
@@ -120,39 +168,111 @@ local function nvim_running(pid)
   return ok and found ~= nil and (found.name or ""):match "nvim" ~= nil
 end
 
--- The pid of the other running nvim holding `path`, or nil.
+-- Whether an nvim is listening at `server`. A crashed nvim's socket file can be left
+-- behind, so it's connected to rather than looked for.
+local function listening(server)
+  if server == vim.v.servername then
+    return true
+  end
+  local mode = server:match "^[^/]+:%d+$" and "tcp" or "pipe"
+  local ok, channel = pcall(vim.fn.sockconnect, mode, server)
+  if ok and type(channel) == "number" and channel > 0 then
+    vim.fn.chanclose(channel)
+    return true
+  end
+  return false
+end
+
+local function age(path)
+  local stat = vim.uv.fs_stat(path)
+  return stat and (os.time() - stat.mtime.sec) or math.huge
+end
+
+local function is_mine(held)
+  return held ~= nil
+    and tonumber(held.pid) == vim.fn.getpid()
+    and (held.server == nil or held.server == vim.v.servername)
+end
+
+-- Whether the lock at `path` (read as `held`) is another running nvim's. A lock from
+-- before the address was kept counts by its pid alone.
+local function live(path, held)
+  if not held then
+    return vim.uv.fs_stat(path) ~= nil and age(path) < LOCK_GRACE
+  end
+  local pid = tonumber(held.pid)
+  if not pid or is_mine(held) or not nvim_running(pid) then
+    return false
+  end
+  return type(held.server) ~= "string" or held.server == "" or listening(held.server)
+end
+
+-- The pid of the other running nvim holding `path` (true while a lock is being
+-- written), or nil.
 local function held_by(path)
   local held = read_json(path)
-  local pid = held and tonumber(held.pid)
-  if pid and pid ~= vim.fn.getpid() and nvim_running(pid) then
-    return pid
+  if live(path, held) then
+    return held and tonumber(held.pid) or true
   end
   return nil
 end
 
--- Takes the lock on set `id`. False when another running nvim holds it.
+local function my_lock()
+  return vim.json.encode { pid = vim.fn.getpid(), server = vim.v.servername }
+end
+
+-- Writes `text` to a temporary file and links it in at `path` only if nothing is
+-- there, so the file appears whole or not at all. False when `path` exists.
+local function create_whole(path, text)
+  local tmp = path .. ".new" .. vim.fn.getpid()
+  local fd = vim.uv.fs_open(tmp, "w", 420)
+  if not fd then
+    return false
+  end
+  vim.uv.fs_write(fd, text)
+  vim.uv.fs_fsync(fd)
+  vim.uv.fs_close(fd)
+  local ok = vim.uv.fs_link(tmp, path)
+  os.remove(tmp)
+  return ok == true
+end
+
+-- Takes the lock on set `id`. False when another running nvim holds it, or is taking
+-- it at the same moment.
 local function take_lock(id)
   vim.fn.mkdir(folder_dir(), "p")
   local path = lock_path(id)
-  local mine = vim.json.encode { pid = vim.fn.getpid(), server = vim.v.servername }
-  for _ = 1, 2 do
-    -- Created only if it isn't there, so two nvims taking it together can't both win.
-    local fd = vim.uv.fs_open(path, "wx", 420)
-    if fd then
-      vim.uv.fs_write(fd, mine)
-      vim.uv.fs_close(fd)
-      return true
-    end
-    local held = read_json(path)
-    if held and tonumber(held.pid) == vim.fn.getpid() then
-      return true
-    end
-    if held_by(path) then
+  if create_whole(path, my_lock()) then
+    return true
+  end
+  local held = read_json(path)
+  if is_mine(held) then
+    return true
+  end
+  if live(path, held) then
+    return false
+  end
+  -- A crashed nvim's lock. Only the nvim holding the claim replaces it, having read it
+  -- again: another may have replaced it since it was read above.
+  local claim = path .. ".claim"
+  if not create_whole(claim, my_lock()) then
+    if age(claim) < CLAIM_GRACE then
       return false
     end
-    os.remove(path)
+    os.remove(claim)
+    if not create_whole(claim, my_lock()) then
+      return false
+    end
   end
-  return false
+  local ok = false
+  held = read_json(path)
+  if is_mine(held) then
+    ok = true
+  elseif not live(path, held) and write_atomic(path, my_lock()) then
+    ok = is_mine(read_json(path))
+  end
+  os.remove(claim)
+  return ok
 end
 
 local function release_lock()
@@ -222,35 +342,57 @@ local function prune()
     if id and id ~= current and not vim.uv.fs_stat(set_path(id)) and not held_by(lock_path(id)) then
       os.remove(lock_path(id))
     end
-    -- A temporary file from a write that nvim died in the middle of.
-    local pid = kind == "file" and tonumber(name:match "%.tmp(%d+)$")
+    -- A temporary file from a write that nvim died in the middle of. (Not a migration
+    -- cut short, which is finished at the next start; see migrate.)
+    local pid = kind == "file"
+      and not name:match "^migrating"
+      and tonumber(name:match "%.tmp(%d+)$" or name:match "%.new(%d+)$")
     if pid and pid ~= vim.fn.getpid() and not nvim_running(pid) then
       os.remove(folder_dir() .. "/" .. name)
     end
   end
 end
 
+-- Makes the old file `taken` (see migrate) a set, and removes it.
+local function finish_migration(taken)
+  local stat = vim.uv.fs_stat(taken)
+  local tabs = read_json(taken)
+  if stat and tabs and #tabs > 0 then
+    local set = { folder = folder, saved_at = stat.mtime.sec, tabs = tabs }
+    local id = os.date("%Y%m%d-%H%M%S", stat.mtime.sec) .. "-migrated"
+    if not write_atomic(set_path(id), vim.json.encode(set)) then
+      return
+    end
+  end
+  os.remove(taken)
+end
+
 -- Before sets, a folder's tabs were one file, <folder>.json beside the folders, with a
 -- .lock for the nvim using it. That file becomes a set of its own. Left alone while
 -- an nvim from before is still running there, as it rewrites the file on quit.
+--
+-- It's renamed to migrating-<pid>.old first, so only one nvim starting at the same
+-- moment migrates it, and a migration an nvim crashed part-way through is finished at
+-- the next start (migrating.tmp<pid> is the name it had before).
 local function migrate()
+  for name, kind in vim.fs.dir(folder_dir()) do
+    local pid = kind == "file" and tonumber(name:match "^migrating%-(%d+)%.old$" or name:match "^migrating%.tmp(%d+)$")
+    if pid and (pid == vim.fn.getpid() or not nvim_running(pid)) then
+      finish_migration(folder_dir() .. "/" .. name)
+    end
+  end
+
   local old = M.dir .. "/" .. folder:gsub("/", "%%") .. ".json"
   local stat = vim.uv.fs_stat(old)
   if not stat or held_by((old:gsub("%.json$", ".lock"))) then
     return
   end
   vim.fn.mkdir(folder_dir(), "p")
-  -- Renamed first so only one nvim starting at the same moment migrates it.
-  local taken = folder_dir() .. "/migrating.tmp" .. vim.fn.getpid()
+  local taken = folder_dir() .. "/migrating-" .. vim.fn.getpid() .. ".old"
   if not vim.uv.fs_rename(old, taken) then
     return
   end
-  local tabs = read_json(taken)
-  if tabs and #tabs > 0 then
-    local set = { folder = folder, saved_at = stat.mtime.sec, tabs = tabs }
-    write_atomic(set_path(os.date("%Y%m%d-%H%M%S", stat.mtime.sec) .. "-migrated"), vim.json.encode(set))
-  end
-  os.remove(taken)
+  finish_migration(taken)
   os.remove((old:gsub("%.json$", ".lock")))
 end
 
@@ -294,8 +436,9 @@ local function cancel_pending()
   end
 end
 
--- Writes this nvim's set now. `refresh` first asks the tab bar what each shell is
--- running, which waits on `ps`, so only the periodic and quitting saves do.
+-- Writes this nvim's set now, with what each shell was last known to run. `refresh`
+-- (the periodic save) also asks the tab bar to find out again with `ps`, which answers
+-- in its own time; a change it finds is saved a moment later.
 function M.save(refresh)
   cancel_pending()
   if not (folder and done) or not require("floatterm.settings").get "reopen_tabs" then
@@ -303,10 +446,8 @@ function M.save(refresh)
   end
   if refresh then
     pcall(function()
-      require("floatterm.tabbar").refresh_now()
+      require("floatterm.tabbar").refresh()
     end)
-    -- Its updates scheduled another save, which this one covers.
-    cancel_pending()
   end
 
   local tabs = snapshot()
@@ -461,6 +602,10 @@ local function reopen(tab, report)
     return false
   end
 
+  if tab.status == "needs_you" then
+    -- Its keys clear "needs you", as for a tab whose hook said so in this nvim.
+    pcall(require, "floatterm.claude")
+  end
   local buf = require("agent").open(tab.cwd, {
     argv = { "claude", "--resume", tab.session_id },
     label = tab.label,
@@ -764,7 +909,7 @@ function M.setup()
   })
   vim.api.nvim_create_autocmd("VimLeavePre", {
     callback = function()
-      pcall(M.save, true)
+      pcall(M.save)
       release_lock()
     end,
   })

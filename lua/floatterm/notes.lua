@@ -11,8 +11,9 @@
 --                        bar coloured and, while the tab's Claude waits on you, what
 --                        it's asking above the bar. A note without one shows the .md.
 -- Switching notes off only hides the pane; the files stay, and lua/floatterm/restore
--- keeps the note_id with the tab. Yours is deleted when its tab closes with nothing in
--- it but the heading it started with.
+-- keeps the note_id with the tab. Notes are never deleted for you: closing a tab or
+-- switching notes off leaves the files, and only Ctrl+d in the picker deletes. The
+-- picker leaves out notes with nothing in them yet.
 --
 -- The pane fills the box lua/floatterm keeps for it (layout().notes): beside the float,
 -- or over the empty window the split placement keeps for it. It's drawn as floats over
@@ -27,7 +28,12 @@
 -- shows all of it in a large float to scroll and copy from.
 --
 -- Captures go at the end of yours: Y on a selection in a terminal tab, <leader>o y on
--- a selection in code, <leader>o a for a one-line note.
+-- a selection in code, <leader>o a for a one-line note. Another nvim may have saved the
+-- file since, so a capture reads it again first and adds to the end of that.
+--
+-- Claude's part is read again whenever its file changes on disk, whichever nvim wrote
+-- it: checked on each draw, on FocusGained and WinEnter, and every M.claude_check_ms
+-- while it shows.
 
 local M = {}
 
@@ -54,12 +60,17 @@ local pane = { mine = nil, claude = nil, buf = nil, overlay = false, away = fals
 -- claude_sheets, { data = the .json } or { lines = the .md's }, read when it changes.
 local claude_bufs = {}
 local claude_sheets = {}
+-- When each note_id's Claude files were last read, to notice another nvim's write, and
+-- the timer that checks them while Claude's part shows (every M.claude_check_ms).
+local claude_stamps = {}
+local checker = nil
+M.claude_check_ms = 1500
 -- Buffers whose keys are set: notes buffers, and terminal tabs (for Y).
 local configured = {}
 local tab_keys = {}
--- The heading each note of yours was made with in this nvim, by note_id, so one
--- you've changed isn't taken for empty.
-local created = {}
+-- Your notes as last read from or written to disk, by buffer, to tell lines typed here
+-- since from another nvim's save.
+local on_disk = {}
 -- Set while the pane closes its own windows, so WinClosed can tell those from a :q.
 local closing = false
 -- The window the cursor was last in before the one it's in now. Kept on WinLeave, as
@@ -104,8 +115,12 @@ local function read_lines(path)
   if not file then
     return nil
   end
+  -- Nil for something that opens but can't be read (a folder).
   local text = file:read "*a"
   file:close()
+  if not text then
+    return nil
+  end
   local lines = vim.split(text, "\n", { plain = true })
   while #lines > 0 and vim.trim(lines[#lines]) == "" do
     table.remove(lines)
@@ -170,13 +185,22 @@ local function ensure_note(record)
     if file then
       file:write(heading .. "\n")
       file:close()
-      created[record.note_id] = heading
     end
   end
   return paths
 end
 
-local set_up_buffer
+local set_up_buffer, fresh_line
+
+-- The file's lines as nvim would read them, or nil when it can't be read.
+local function disk_lines(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  return ok and lines or nil
+end
+
+local function remember_disk(buf)
+  on_disk[buf] = disk_lines(api.nvim_buf_get_name(buf))
+end
 
 -- Your notes as a buffer on the file, loaded but kept out of the buffer list.
 local function mine_buf(record)
@@ -314,9 +338,29 @@ local function show_lines(buf, lines, highlights)
   end
 end
 
+-- What Claude's files are on disk now: their mtimes and sizes in one string.
+local function claude_stamp(note_id)
+  local paths = paths_for(note_id)
+  local parts = {}
+  for _, path in ipairs { paths.claude_json, paths.claude } do
+    local stat = vim.uv.fs_stat(path)
+    table.insert(parts, stat and (stat.mtime.sec .. "." .. stat.mtime.nsec .. ":" .. stat.size) or "-")
+  end
+  return table.concat(parts, " ")
+end
+
 -- Reads Claude's files again, for the next draw.
 local function load_claude(note_id)
+  claude_stamps[note_id] = claude_stamp(note_id)
   claude_sheets[note_id] = read_sheet(note_id)
+end
+
+-- Claude's part as on disk now, read again only when its files changed since.
+local function current_sheet(note_id)
+  if not claude_sheets[note_id] or claude_stamps[note_id] ~= claude_stamp(note_id) then
+    load_claude(note_id)
+  end
+  return claude_sheets[note_id]
 end
 
 -- Draws Claude's part of a note into its buffer at `width`, for the tab `record`.
@@ -325,7 +369,7 @@ local function render_claude(note_id, width, record)
   if not (buf and api.nvim_buf_is_valid(buf)) then
     return
   end
-  local lines, highlights, empty = claude_lines(claude_sheets[note_id] or read_sheet(note_id), width, record)
+  local lines, highlights, empty = claude_lines(current_sheet(note_id), width, record)
   show_lines(buf, lines, highlights)
   vim.b[buf].floatterm_notes_empty = empty
 end
@@ -363,10 +407,19 @@ local function close_windows()
   end
 end
 
+local function stop_checking()
+  if checker then
+    checker:stop()
+    checker:close()
+    checker = nil
+  end
+end
+
 local function close()
   close_windows()
   pane.buf = nil
   pane.overlay = false
+  stop_checking()
 end
 
 -- Opens a pane window, or moves an open one, onto `buf`.
@@ -518,6 +571,33 @@ local function draw(record, box, overlay)
   })
 end
 
+local function claude_changed()
+  local ft = package.loaded["floatterm"]
+  local record = ft and pane.buf and ft.record(pane.buf)
+  return record
+    and record.note_id
+    and claude_sheets[record.note_id] ~= nil
+    and claude_stamps[record.note_id] ~= claude_stamp(record.note_id)
+end
+
+local function start_checking()
+  if checker then
+    return
+  end
+  checker = vim.uv.new_timer()
+  checker:start(
+    M.claude_check_ms,
+    M.claude_check_ms,
+    vim.schedule_wrap(function()
+      if not (pane.claude and api.nvim_win_is_valid(pane.claude)) then
+        stop_checking()
+      elseif claude_changed() then
+        M.redraw()
+      end
+    end)
+  )
+end
+
 -- Draws the pane for the tab showing, or closes it when the float is hidden or that
 -- tab has notes off.
 function M.redraw()
@@ -557,6 +637,11 @@ function M.redraw()
     return
   end
   draw(record, box, pane.overlay)
+  if pane.claude and api.nvim_win_is_valid(pane.claude) then
+    start_checking()
+  else
+    stop_checking()
+  end
 end
 
 local pending = false
@@ -728,7 +813,12 @@ function M.read_claude()
   local from_win, from_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
   -- Your notes' file is <note_id>.md.
   local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
-  local sheet = note_id and read_sheet(note_id) or { lines = {} }
+  local stamp = note_id and claude_stamps[note_id]
+  local sheet = note_id and current_sheet(note_id) or { lines = {} }
+  if note_id and claude_stamps[note_id] ~= stamp then
+    -- Read newer than the pane shows: the pane catches up too.
+    schedule_redraw()
+  end
   if not sheet.data and #sheet.lines == 0 then
     vim.notify("No Claude notes for this tab yet", vim.log.levels.INFO)
     return
@@ -825,10 +915,35 @@ set_up_buffer = function(buf, editable)
     -- coming back to nvim or into the notes, rather than saving over it from an old
     -- copy. Unsaved edits here aren't thrown away (nvim asks instead).
     vim.bo[buf].autoread = true
+    remember_disk(buf)
     api.nvim_create_autocmd({ "FocusGained", "BufEnter", "WinEnter" }, {
       buffer = buf,
       callback = function()
         vim.cmd "silent! checktime"
+      end,
+    })
+    api.nvim_create_autocmd({ "BufReadPost", "BufWritePost" }, {
+      buffer = buf,
+      callback = function(args)
+        remember_disk(args.buf)
+      end,
+    })
+    -- Reloaded with the other nvim's save. Typing in it, you're put back on an empty
+    -- line at the end, as when you came in.
+    api.nvim_create_autocmd("FileChangedShellPost", {
+      buffer = buf,
+      callback = function(args)
+        remember_disk(args.buf)
+        local win = pane.mine
+        if
+          win
+          and api.nvim_win_is_valid(win)
+          and api.nvim_get_current_win() == win
+          and api.nvim_win_get_buf(win) == args.buf
+          and api.nvim_get_mode().mode:sub(1, 1) == "i"
+        then
+          fresh_line(win)
+        end
       end,
     })
   end
@@ -859,13 +974,59 @@ set_up_buffer = function(buf, editable)
   end
 end
 
+-- Lines in `here` that aren't in `base`: what was typed since the file was last read
+-- or saved, without the empty line typing starts on.
+local function typed_since(base, here)
+  local added = {}
+  local hunks = vim.diff(table.concat(base, "\n") .. "\n", table.concat(here, "\n") .. "\n", {
+    result_type = "indices",
+  })
+  for _, hunk in ipairs(hunks) do
+    for i = hunk[3], hunk[3] + hunk[4] - 1 do
+      table.insert(added, here[i])
+    end
+  end
+  while #added > 0 and vim.trim(added[#added]) == "" do
+    table.remove(added)
+  end
+  return added
+end
+
+-- Your notes as the latest on disk, so a capture adds to the end of what another nvim
+-- saved rather than saving over it (or nvim asking whether to). Unchanged here, the
+-- file is just read again. With unsaved typing here, the lines typed go after the
+-- other nvim's (changes to its lines give way to the file) and that's saved.
+local function latest_mine(record)
+  local buf = mine_buf(record)
+  if not vim.bo[buf].modified then
+    -- With a buffer given, checktime reloads now rather than at the next key.
+    vim.cmd("silent! checktime " .. buf)
+    return buf
+  end
+  local path = api.nvim_buf_get_name(buf)
+  local disk = disk_lines(path)
+  if not disk or vim.deep_equal(disk, on_disk[buf]) then
+    return buf
+  end
+  local merged =
+    vim.list_extend(vim.list_slice(disk), typed_since(on_disk[buf] or {}, api.nvim_buf_get_lines(buf, 0, -1, false)))
+  if vim.fn.writefile(merged, path) ~= 0 then
+    return buf
+  end
+  api.nvim_buf_set_lines(buf, 0, -1, false, merged)
+  vim.bo[buf].modified = false
+  -- Now the same as the file, so this reloads it quietly and nvim knows it's current.
+  vim.cmd("silent! checktime " .. buf)
+  return buf
+end
+
 -- Puts lines at the end of a tab's notes, switching them on if they're off, and saves.
 -- With `gap`, a blank line first unless the notes already end with one.
 local function append(record, lines, gap)
   if not record.notes_on then
     M.set(record.buf, true)
   end
-  local buf = mine_buf(record)
+  local buf = latest_mine(record)
   local last = api.nvim_buf_get_lines(buf, -2, -1, false)[1] or ""
   if gap and vim.trim(last) ~= "" then
     table.insert(lines, 1, "")
@@ -989,56 +1150,11 @@ function M.add_note()
     if input == "" or not now then
       return
     end
-    local mine = mine_buf(now)
+    local mine = latest_mine(now)
     local last = api.nvim_buf_get_lines(mine, -2, -1, false)[1] or ""
     -- Notes in a row make one list.
     append(now, { "- " .. os.date "%H:%M" .. " " .. input }, not last:match "^%- %d%d:%d%d ")
   end)
-end
-
--- Deletes a note's file of yours when it holds nothing but the heading it was made with
--- and no other tab has it. Kept when Claude has written some, so the picker still finds
--- them. `name` is the tab's name, for a note made before this nvim started: the heading
--- it would have been made with.
-local function delete_if_empty(note_id, closing_buf, name)
-  for _, record in ipairs(floatterm().tabs()) do
-    if record.note_id == note_id and record.buf ~= closing_buf then
-      return
-    end
-  end
-  local paths = paths_for(note_id)
-  if vim.uv.fs_stat(paths.claude) then
-    return
-  end
-  local buf = vim.fn.bufnr(paths.mine)
-  local lines
-  if buf ~= -1 and api.nvim_buf_is_loaded(buf) then
-    save(buf)
-    lines = api.nvim_buf_get_lines(buf, 0, -1, false)
-  else
-    lines = read_lines(paths.mine)
-  end
-  if not lines then
-    return
-  end
-  -- Blank lines at the end are left by going into the notes (an empty line to type on).
-  -- A file with nothing left in it at all counts as empty too.
-  while #lines > 0 and vim.trim(lines[#lines]) == "" do
-    table.remove(lines)
-  end
-  local heading = created[note_id] or (name and ("# " .. name))
-  if #lines > 1 or (#lines == 1 and lines[1] ~= heading) then
-    return
-  end
-  if buf ~= -1 then
-    if pane.mine and api.nvim_win_is_valid(pane.mine) and api.nvim_win_get_buf(pane.mine) == buf then
-      close_windows()
-    end
-    configured[buf] = nil
-    pcall(api.nvim_buf_delete, buf, { force = true })
-  end
-  os.remove(paths.mine)
-  created[note_id] = nil
 end
 
 -- Gives the tab `buf` the notes `note_id` and shows them.
@@ -1053,9 +1169,6 @@ function M.attach(buf, note_id)
     save(vim.fn.bufnr(paths_for(old).mine))
   end
   ft.update(buf, { note_id = note_id, notes_on = true })
-  if old and old ~= note_id then
-    delete_if_empty(old, nil, ft.name(record))
-  end
 end
 
 -- Deletes a note, both files, and takes it off any tab that has it.
@@ -1133,8 +1246,20 @@ function M.list()
   return found
 end
 
--- <leader>o o: notes in this folder. Enter gives them to the tab the float last
--- showed; Ctrl+d deletes, after asking.
+-- Whether a note has anything in it: more in yours than a heading, or Claude's part.
+local function has_something(note)
+  local written = vim.tbl_filter(function(line)
+    return vim.trim(line) ~= ""
+  end, read_lines(note.path) or {})
+  if #written > 1 or (#written == 1 and not written[1]:match "^#%s") then
+    return true
+  end
+  local sheet = read_sheet(note.id)
+  return sheet.data ~= nil or #sheet.lines > 0
+end
+
+-- <leader>o o: notes in this folder with something in them. Enter gives them to the
+-- tab the float last showed; Ctrl+d deletes, after asking.
 function M.pick()
   local ok = pcall(require, "telescope")
   if not ok then
@@ -1148,7 +1273,7 @@ function M.pick()
   local action_state = require "telescope.actions.state"
   local entry_display = require "telescope.pickers.entry_display"
 
-  local notes = M.list()
+  local notes = vim.tbl_filter(has_something, M.list())
   if #notes == 0 then
     vim.notify("floatterm: no notes in " .. vim.fn.fnamemodify(folder(), ":~"), vim.log.levels.INFO)
     return
@@ -1283,11 +1408,7 @@ end
 
 -- Your notes are typed into at the end, on an empty line (added unless the last line
 -- already is one).
-local function to_fresh_line()
-  local win = pane.mine
-  if not (win and api.nvim_win_is_valid(win) and api.nvim_get_current_win() == win) then
-    return
-  end
+fresh_line = function(win)
   local buf = api.nvim_win_get_buf(win)
   local count = api.nvim_buf_line_count(buf)
   if api.nvim_buf_get_lines(buf, count - 1, count, false)[1] ~= "" then
@@ -1299,6 +1420,14 @@ local function to_fresh_line()
     count = count + 1
   end
   api.nvim_win_set_cursor(win, { count, 0 })
+end
+
+local function to_fresh_line()
+  local win = pane.mine
+  if not (win and api.nvim_win_is_valid(win) and api.nvim_get_current_win() == win) then
+    return
+  end
+  fresh_line(win)
   vim.cmd "startinsert"
 end
 
@@ -1370,6 +1499,15 @@ function M.setup()
     group = group,
     callback = function()
       left = api.nvim_get_current_win()
+    end,
+  })
+  -- Another nvim may have rewritten Claude's part while you were away.
+  api.nvim_create_autocmd({ "FocusGained", "WinEnter" }, {
+    group = group,
+    callback = function()
+      if pane.claude and api.nvim_win_is_valid(pane.claude) and claude_changed() then
+        schedule_redraw()
+      end
     end,
   })
   -- Moving into the split's empty notes window (Ctrl+w, a click) lands in the notes.
@@ -1469,7 +1607,6 @@ function M.setup()
       if pane.buf == args.buf then
         close()
       end
-      delete_if_empty(record.note_id, args.buf, ft.name(record))
     end,
   })
   api.nvim_create_autocmd({ "VimLeavePre", "FocusLost" }, {

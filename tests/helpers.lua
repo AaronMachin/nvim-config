@@ -208,18 +208,26 @@ end
 
 -- Child nvims ---------------------------------------------------------------
 
--- Runs `lua` in a fresh headless nvim (this config, the same isolation) started in
--- `cwd`, with `globals` set as vim.g before anything loads. Whatever the code writes
--- with io.stdout:write comes back. It quits once the code returns, unless the code
--- quits itself.
-function H.child(cwd, lua, globals, timeout)
+-- Starts `lua` in a fresh headless nvim (this config, the same isolation) in `cwd`,
+-- with `globals` set as vim.g before anything loads, and returns the vim.system object.
+-- opts.args go on the command line after the rest; opts.stdin is given to it.
+function H.child_start(cwd, lua, globals, opts)
+  opts = opts or {}
   local args = { vim.v.progpath, "--headless", "--noplugin" }
   for key, value in pairs(globals or {}) do
     vim.list_extend(args, { "--cmd", ("lua vim.g[%q] = vim.json.decode(%q)"):format(key, vim.json.encode(value)) })
   end
   local script = H.write(H.tmpdir "child" .. "/script.lua", lua)
   vim.list_extend(args, { "-u", H.config .. "/tests/minimal_init.lua", "-c", "luafile " .. script, "-c", "qa!" })
-  local result = vim.system(args, { cwd = cwd, text = true, env = { NVIM_TEST_CHILD = "1" } }):wait(timeout or 20000)
+  vim.list_extend(args, opts.args or {})
+  return vim.system(args, { cwd = cwd, text = true, stdin = opts.stdin, env = { NVIM_TEST_CHILD = "1" } })
+end
+
+-- Runs `lua` in a child nvim as H.child_start does and waits for it. Whatever the code
+-- writes with io.stdout:write comes back. It quits once the code returns, unless the
+-- code quits itself.
+function H.child(cwd, lua, globals, timeout, opts)
+  local result = H.child_start(cwd, lua, globals, opts):wait(timeout or 20000)
   return result.stdout or "", result
 end
 

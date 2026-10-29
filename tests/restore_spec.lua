@@ -31,7 +31,7 @@ end
 
 -- Restores in a fresh nvim in `project`, with `before` run first (stubs, say), and
 -- returns what it opened.
-local function restore_in(project, dir, before)
+local function restore_in(project, dir, before, opts)
   local code = (before or "")
     .. [[
     local r = require "floatterm.restore"
@@ -48,7 +48,7 @@ local function restore_in(project, dir, before)
     end
     io.stdout:write(vim.json.encode(out))
   ]]
-  local out, result = H.child(project, code, { floatterm_tabs_dir = dir, floatterm_restore_headless = true })
+  local out, result = H.child(project, code, { floatterm_tabs_dir = dir, floatterm_restore_headless = true }, nil, opts)
   local ok, decoded = pcall(vim.json.decode, out)
   assert(ok, "child nvim said: " .. out .. (result.stderr or ""))
   return decoded
@@ -175,7 +175,10 @@ describe("restore", function()
   it("offers a copy of the tabs another running nvim has, mentioning the shared notes", function()
     write_set(dir, project, "live", { saved_at = 100, tabs = { { kind = "shell", cwd = project, label = "theirs" } } })
     -- This test's own nvim stands in for the other one.
-    H.write(dir .. "/" .. folder_key(project) .. "/live.lock", vim.json.encode { pid = vim.fn.getpid() })
+    H.write(
+      dir .. "/" .. folder_key(project) .. "/live.lock",
+      vim.json.encode { pid = vim.fn.getpid(), server = vim.v.servername }
+    )
     local out = restore_in(
       project,
       dir,
@@ -211,6 +214,84 @@ describe("restore", function()
     assert.equals("mine", out.tabs[1].label)
   end)
 
+  it("ignores a lock whose pid is a running nvim but not the one at its server address", function()
+    write_set(dir, project, "reused", { saved_at = 100, tabs = { { kind = "shell", cwd = project, label = "mine" } } })
+    -- The pid is an nvim (this one), but the address is a crashed one's. Kept short: a
+    -- socket path past macOS's 104 characters is cut, and could reach this nvim's.
+    H.write(
+      dir .. "/" .. folder_key(project) .. "/reused.lock",
+      vim.json.encode { pid = vim.fn.getpid(), server = "/nonexistent/nvim.1.0" }
+    )
+    local out = restore_in(
+      project,
+      dir,
+      [[
+      vim.ui.select = function() error "shouldn't ask" end
+    ]]
+    )
+    assert.equals("reused", out.state.current)
+  end)
+
+  it("takes a lock still being written for another nvim's", function()
+    write_set(dir, project, "new", { saved_at = 100, tabs = { { kind = "shell", cwd = project, label = "theirs" } } })
+    H.write(dir .. "/" .. folder_key(project) .. "/new.lock", "")
+    local out = restore_in(
+      project,
+      dir,
+      [[
+      vim.ui.select = function(items, _, on_choice)
+        _G.prompts = { "asked" }
+        on_choice(items[#items])
+      end
+    ]]
+    )
+    assert.same({ "asked" }, out.prompts)
+    assert.is_not.equals("new", out.state.current)
+    assert.equals("", H.read(dir .. "/" .. folder_key(project) .. "/new.lock"))
+  end)
+
+  it("lets only one of two nvims racing for a crashed nvim's lock have the set", function()
+    write_set(dir, project, "stale", { saved_at = 100, tabs = { { kind = "shell", cwd = project, label = "mine" } } })
+    H.write(dir .. "/" .. folder_key(project) .. "/stale.lock", vim.json.encode { pid = 999999 })
+    local go = H.tmpdir "go" .. "/go"
+    -- Both start together. Asking whether pid 999999 is running takes a while the
+    -- second time (as the lock is taken), longer for the second nvim, so it decides the
+    -- lock is stale only after the first has taken it over.
+    local function racer(delay)
+      return H.child_start(
+        project,
+        ([[
+        local get_proc, calls = vim.api.nvim_get_proc, 0
+        vim.api.nvim_get_proc = function(pid)
+          if pid == 999999 then
+            calls = calls + 1
+            if calls == 2 then
+              vim.uv.sleep(%d)
+            end
+            return nil
+          end
+          return get_proc(pid)
+        end
+        vim.ui.select = function(items, _, on_choice) on_choice(items[#items]) end
+        vim.notify = function() end
+        vim.wait(5000, function() return vim.uv.fs_stat(%q) ~= nil end, 5)
+        local r = require "floatterm.restore"
+        r.setup()
+        r.restore()
+        vim.wait(1500, function() return false end, 20)
+        io.stdout:write(r.state().current or "none")
+      ]]):format(delay, go),
+        { floatterm_tabs_dir = dir, floatterm_restore_headless = true }
+      )
+    end
+    local first, second = racer(100), racer(700)
+    H.flush(500)
+    H.write(go, "")
+    local a, b = first:wait(20000).stdout, second:wait(20000).stdout
+    local owners = (a == "stale" and 1 or 0) + (b == "stale" and 1 or 0)
+    assert.equals(1, owners, "first: " .. a .. ", second: " .. b)
+  end)
+
   it("turns the old single saved file into a set", function()
     H.write(
       dir .. "/" .. folder_key(project) .. ".json",
@@ -222,6 +303,22 @@ describe("restore", function()
     local ids = vim.tbl_keys(sets_in(dir, project))
     assert.equals(1, #ids)
     assert.truthy(ids[1]:find "%-migrated$")
+  end)
+
+  it("finishes a migration that an nvim crashed part-way through", function()
+    for _, name in ipairs { "migrating.tmp999999", "migrating-999999.old" } do
+      local here = H.tmpdir "project"
+      H.write(
+        dir .. "/" .. folder_key(here) .. "/" .. name,
+        vim.json.encode { { kind = "shell", cwd = here, label = "old" } }
+      )
+      local out = restore_in(here, dir)
+      assert.equals("old", out.tabs[1] and out.tabs[1].label, name)
+      assert.is_false(H.exists(dir .. "/" .. folder_key(here) .. "/" .. name), name)
+      local ids = vim.tbl_keys(sets_in(dir, here))
+      assert.equals(1, #ids, name)
+      assert.truthy(ids[1]:find "%-migrated$", name)
+    end
   end)
 
   it("keeps the 10 most recently saved sets", function()
@@ -309,6 +406,35 @@ describe("restore", function()
       assert.equals(0, vim.tbl_count(sets_in(dir, project)))
     end)
 
+    it("saves without waiting on ps, using the commands it last knew", function()
+      H.script(bin, "ps", "sleep 3")
+      local out = H.child(
+        project,
+        [[
+        local r = require "floatterm.restore"
+        r.setup()
+        r.restore()
+        local ft = require "floatterm"
+        local tabbar = require "floatterm.tabbar"
+        ft.new_tab(nil, { label = "server" })
+        local runs = tabbar.ps_runs
+        local start = vim.uv.hrtime()
+        r.save(true)
+        local periodic = (vim.uv.hrtime() - start) / 1e6
+        start = vim.uv.hrtime()
+        vim.api.nvim_exec_autocmds("VimLeavePre", {})
+        local quit = (vim.uv.hrtime() - start) / 1e6
+        io.stdout:write(vim.json.encode { periodic = periodic, quit = quit, asked = tabbar.ps_runs - runs })
+      ]],
+        { floatterm_tabs_dir = dir, floatterm_restore_headless = true }
+      )
+      local times = vim.json.decode(out)
+      assert.is_true(times.periodic < 200, "periodic save took " .. times.periodic .. "ms")
+      assert.is_true(times.quit < 200, "quit save took " .. times.quit .. "ms")
+      -- The periodic save still asks, for next time.
+      assert.equals(1, times.asked)
+    end)
+
     it("does nothing for nvim opened on a file", function()
       H.write(project .. "/file.txt", "x\n")
       write_set(dir, project, "a", { saved_at = 1, tabs = { { kind = "shell", cwd = project } } })
@@ -324,6 +450,40 @@ describe("restore", function()
         { floatterm_tabs_dir = dir, floatterm_restore_headless = true }
       )
       assert.equals("0", out)
+    end)
+
+    it("does nothing for nvim reading stdin, a session, an error file or only +cmd", function()
+      local session = H.write(H.tmpdir "session" .. "/session.vim", "\n")
+      local errors = H.write(project .. "/errors.txt", "file.txt:1:oops\n")
+      H.write(project .. "/file.txt", "x\n")
+      write_set(dir, project, "a", { saved_at = 1, tabs = { { kind = "shell", cwd = project } } })
+      for _, case in ipairs {
+        { args = { "-" }, stdin = "from stdin\n" },
+        { args = { "-S", session } },
+        { args = { "-q", errors } },
+        { args = { "+set nomore" } },
+      } do
+        local out = H.child(
+          project,
+          [[
+          vim.ui.select = function() error "shouldn't ask" end
+          local r = require "floatterm.restore"
+          r.setup()
+          r.restore()
+          io.stdout:write(tostring(#require("floatterm").tabs()))
+        ]],
+          { floatterm_tabs_dir = dir, floatterm_restore_headless = true },
+          nil,
+          case
+        )
+        assert.equals("0", out, case.args[1])
+      end
+    end)
+
+    it("restores for nvim opened on its folder", function()
+      write_set(dir, project, "a", { saved_at = 1, tabs = { { kind = "shell", cwd = project, label = "here" } } })
+      local out = restore_in(H.tmpdir "elsewhere", dir, nil, { args = { project } })
+      assert.equals("here", out.tabs[1].label)
     end)
   end)
 end)

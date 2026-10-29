@@ -17,6 +17,8 @@
 --   Stop              status = "done"
 -- needs_you_message goes whenever the status moves on from "needs_you".
 --   SessionEnd        back to a shell tab, for when Claude exits and its shell stays
+-- A key pressed in a needs-you tab's terminal also takes it to "working" at once, as
+-- answering (approving, or Esc) always takes a key.
 --
 -- Only the Claude started directly in the tab counts: the tab's job itself, or a
 -- child of the tab's shell (`claude` typed there). Anything Claude runs inherits the
@@ -282,6 +284,40 @@ function M.tool_used(tab_id, pid)
     end
   end)
 end
+
+-- Mouse and focus events reach the terminal too, but aren't an answer.
+local function answers(key)
+  local name = vim.fn.keytrans(key)
+  return name ~= ""
+    and not (
+      name:find "Mouse"
+      or name:find "ScrollWheel"
+      or name:find "Drag"
+      or name:find "Release"
+      or name:find "Focus"
+    )
+end
+
+-- Watches what's typed in terminal mode for a key in a tab whose Claude needs you.
+-- Runs for every key, so it only looks until it knows the key isn't one.
+vim.on_key(function(key, typed)
+  if vim.api.nvim_get_mode().mode ~= "t" then
+    return
+  end
+  local floatterm = package.loaded["floatterm"]
+  local buf = vim.api.nvim_get_current_buf()
+  local record = floatterm and floatterm.record(buf)
+  if not (record and record.status == "needs_you" and answers(typed ~= nil and typed ~= "" and typed or key)) then
+    return
+  end
+  -- Nothing can change while a key is being handled.
+  vim.schedule(function()
+    local now = floatterm.record(buf)
+    if now and now.status == "needs_you" then
+      floatterm.update(buf, { status = "working", needs_you_message = vim.NIL })
+    end
+  end)
+end, vim.api.nvim_create_namespace "floatterm_claude_answered")
 
 -- For tests: applies an event as if the hook had sent it, and runs the check for
 -- killed Claudes now.

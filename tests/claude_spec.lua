@@ -124,6 +124,41 @@ describe("claude hooks", function()
       assert.equals("done", record.status)
     end)
 
+    it("a key pressed in that tab's terminal clears needs you", function()
+      claude.apply(record, { hook_event_name = "Notification", message = "Allow?" })
+      local other = H.sleep_tab { label = "other" }
+      ft.update(other, { kind = "claude", status = "needs_you", needs_you_message = "Me too?" })
+      local changed = {}
+      api.nvim_create_autocmd("User", {
+        pattern = "FloatTermTabChanged",
+        callback = function(args)
+          if args.data.buf == buf then
+            vim.list_extend(changed, args.data.fields or {})
+          end
+        end,
+      })
+      ft.focus_buf(buf)
+      -- Typed in terminal mode, then out of it again, from timers: feedkeys with x!
+      -- stays in terminal mode until something ends it.
+      local mode
+      vim.defer_fn(function()
+        mode = api.nvim_get_mode().mode
+        api.nvim_input "y"
+        vim.defer_fn(function()
+          api.nvim_input "<C-\\><C-n>"
+        end, 50)
+      end, 50)
+      api.nvim_feedkeys("i", "x!", false)
+      assert.equals("t", mode)
+      H.wait(2000, function()
+        return record.status == "working"
+      end, "still needs you")
+      assert.is_nil(record.needs_you_message)
+      assert.truthy(vim.tbl_contains(changed, "status"))
+      -- Only that tab's.
+      assert.equals("needs_you", ft.record(other).status)
+    end)
+
     it("Stop: done, the question gone, and Claude's notes told", function()
       local stopped = nil
       H.stub(require "floatterm.claude_notes", "on_stop", function(r)

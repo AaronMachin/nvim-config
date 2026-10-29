@@ -4,7 +4,8 @@
 -- worktree's, when it's in one) and the first line of its Claude notes' summary. Tabs
 -- that need you come first, then working, then done, then by name. The preview is the
 -- tab's Claude notes at the preview's width, with what it's asking on top while it
--- waits. Enter shows the tab; Ctrl+o opens its first PR in the browser.
+-- waits. Enter shows the tab; Ctrl+o opens its PR in the browser (a GitHub pull request
+-- link first, else the first link in its PRs).
 
 local M = {}
 
@@ -59,32 +60,48 @@ local function sheet_of(record)
   return sheet
 end
 
--- The first PR's URL: from the data, else the .md's "# PRs" list.
+-- A URL as written in text, without the punctuation that ends a sentence or bracket
+-- round it.
+local function tidy_url(url)
+  return (url:gsub("[%.,;:!%?%)%]>'\"`]+$", ""))
+end
+
+local function is_pr(url)
+  return url:match "^https://github%.com/[^/]+/[^/]+/pull/%d+" ~= nil
+end
+
+-- The PR to open: the first GitHub pull request link, else the first link. From the
+-- data's PRs, else the URLs in the .md's "# PRs" list.
 local function first_pr(sheet)
   if not sheet then
     return nil
   end
+  local urls = {}
   if sheet.data then
     for _, pr in ipairs(type(sheet.data.prs) == "table" and sheet.data.prs or {}) do
-      local url = type(pr) == "table" and type(pr.url) == "string" and vim.trim(pr.url) or ""
+      local url = type(pr) == "table" and type(pr.url) == "string" and tidy_url(vim.trim(pr.url)) or ""
       if url:match "^https?://" then
-        return url
+        table.insert(urls, url)
       end
     end
-    return nil
-  end
-  local in_prs = false
-  for _, line in ipairs(sheet.lines) do
-    if line:match "^#%s" then
-      in_prs = line:match "^#%s+PRs" ~= nil
-    elseif in_prs then
-      local url = line:match "https?://[^%s)>]+"
-      if url then
-        return url
+  else
+    local in_prs = false
+    for _, line in ipairs(sheet.lines) do
+      if line:match "^#%s" then
+        in_prs = line:match "^#%s+PRs" ~= nil
+      elseif in_prs then
+        for url in line:gmatch "https?://[^%s<>]+" do
+          table.insert(urls, tidy_url(url))
+        end
       end
     end
   end
-  return nil
+  for _, url in ipairs(urls) do
+    if is_pr(url) then
+      return url
+    end
+  end
+  return urls[1]
 end
 
 -- Every Claude tab, in the order the picker lists them.
@@ -257,5 +274,8 @@ function M.pick()
     })
     :find()
 end
+
+-- For tests.
+M.first_pr = first_pr
 
 return M

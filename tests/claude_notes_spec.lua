@@ -123,6 +123,57 @@ describe("Claude's notes", function()
       assert.truthy(lines[i + 1]:find "^%[")
       assert.equals("FloatTermNeedsYou", highlights[1].group)
     end)
+
+    it("keeps names, details, link titles and detail lines on one line each", function()
+      local lines = cn.render {
+        summary = "first\nsecond",
+        tasks = { task("fix\nlogin", "in_progress", "reading\nlogs") },
+        prs = { { url = "https://github.com/o/r/pull/1", title = "the\nfix" } },
+        details = { "one\ntwo" },
+      }
+      for i, line in ipairs(lines) do
+        if i ~= 2 then
+          assert.is_nil(line:find("\n", 1, true), line)
+        end
+      end
+      assert.is_not_nil(find_line(lines, "fix login"))
+      assert.is_not_nil(find_line(lines, "(reading logs)", 1, true))
+      assert.is_not_nil(find_line(lines, "^%- the fix: "))
+      assert.is_not_nil(find_line(lines, "^%- one two$"))
+    end)
+
+    it("shows at most six task rows, the rest as a count", function()
+      local tasks = { task("d1", "done"), task("d2", "done") }
+      for i = 1, 10 do
+        table.insert(tasks, task("task " .. i, "pending"))
+      end
+      local lines = cn.render { summary = "s", tasks = tasks }
+      local rows = vim.tbl_filter(function(line)
+        return line:find "^  ├─" ~= nil or line:find "^  └─" ~= nil
+      end, lines)
+      assert.equals(6, #rows)
+      assert.truthy(rows[1]:find("2 done", 1, true))
+      assert.truthy(rows[2]:find("task 1", 1, true))
+      assert.truthy(rows[6]:find("… 6 more", 1, true))
+      assert.is_nil(find_line(lines, "task 5"))
+    end)
+
+    it("cuts a long detail so its row fits a narrow pane", function()
+      local lines = cn.render({
+        summary = "s",
+        tasks = { task("deploy", "in_progress", "waiting on the pipeline to finish its checks") },
+      }, { width = 44 })
+      local _, row = find_line(lines, "deploy")
+      assert.is_true(vim.fn.strdisplaywidth(row) <= 44, row)
+      assert.truthy(row:find("…)", 1, true), row)
+    end)
+
+    it("leaves no double blank line without a summary", function()
+      local lines = cn.render { summary = "", tasks = { task("a", "pending") } }
+      for i = 2, #lines do
+        assert.is_false(lines[i] == "" and lines[i - 1] == "", "blank lines at " .. i)
+      end
+    end)
   end)
 
   describe("redaction", function()
@@ -133,6 +184,8 @@ describe("Claude's notes", function()
       { '{\\"github_token\\":\\"abc\\"}', '{\\"github_token\\":\\"[redacted]\\"}' },
       { "curl --token abcdef https://x", "curl --token [redacted] https://x" },
       { "https://x/?token=abc&page=2", "https://x/?token=[redacted]&page=2" },
+      { "https://s3/f?X-Amz-Signature=abc123&a=1", "https://s3/f?X-Amz-Signature=[redacted]&a=1" },
+      { "see https://x/cb#access_token=abc&state=1", "see https://x/cb#access_token=[redacted]&state=1" },
       { "Authorization: Basic dXNlcjpwYXNz", "Authorization: [redacted]" },
       { "use Bearer abcdefgh12345 now", "use Bearer [redacted] now" },
       { "key AKIAABCDEFGHIJKLMNOP here", "key [redacted] here" },
@@ -147,6 +200,19 @@ describe("Claude's notes", function()
         assert.equals(case[2], cn.redact(case[1]))
       end)
     end
+
+    it("keeps links whole", function()
+      for _, url in ipairs {
+        "https://docs.google.com/document/d/1aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5kL7nQ2/edit",
+        "https://drive.google.com/file/d/1A2b3C4d5E6f7G8h9I0jKlMnOpQrStUvWxYz12345/view?usp=sharing",
+        "https://www.figma.com/design/AbC123xYz456QwErTy7890aBcDeFgHiJkLmNoP/Login?node-id=1-2&t=AbCdEfGh12345678-1",
+        "https://www.loom.com/share/0a1b2c3d4e5f60718293a4b5c6d7e8f9?sid=Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Jh1Gf0EdCbA98765",
+        "https://github.com/o/r/pull/12#discussion_r1234567",
+        "https://github.com/o/r/blob/main/app/Auth/TokenController.php",
+      } do
+        assert.equals("open " .. url .. " now", cn.redact("open " .. url .. " now"))
+      end
+    end)
 
     it("keeps things that only look a bit like secrets", function()
       for _, text in ipairs {

@@ -902,29 +902,14 @@ local function refresh_commands(tabs)
   end
 end
 
--- Brings every shell tab's command up to date now, waiting for `ps` (half a second at
--- most). lua/floatterm/restore calls it before saving, as `ps` otherwise only runs while
--- the bar is drawn or a Claude tab exists. Does nothing with no shell tabs, and leaves
--- the records as they were if `ps` fails.
-function M.refresh_now()
+-- Brings every shell tab's command up to date with `ps`, without waiting for it: the
+-- records change (and FloatTermTabChanged fires) once it answers. lua/floatterm/restore
+-- calls it for its periodic save, as `ps` otherwise only runs while the bar is drawn or
+-- a Claude tab exists. Does nothing with no shell tabs or a `ps` still running, and
+-- leaves the records as they were if `ps` fails.
+function M.refresh()
   local floatterm = package.loaded["floatterm"]
-  local pids = shell_pids(floatterm and floatterm.tabs() or {})
-  if vim.tbl_isempty(pids) then
-    return
-  end
-  -- Every process at once, so the foreground groups' leaders come in the same call.
-  local ok, result = pcall(function()
-    return vim.system({ "ps", "-A", "-o", "pid=,tpgid=,args=" }, { text = true }):wait(500)
-  end)
-  if not ok or result.code ~= 0 then
-    return
-  end
-  local all = parse_ps(result.stdout, true)
-  local leaders = {}
-  for pid, process in pairs(all) do
-    leaders[pid] = process.args
-  end
-  pcall(apply_commands, pids, all, leaders)
+  refresh_commands(floatterm and floatterm.tabs() or {})
 end
 
 local function stop_timer()

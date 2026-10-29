@@ -83,6 +83,27 @@ describe("Claude overview", function()
     assert.same({ "No Claude notes for this tab yet" }, lines)
   end)
 
+  it("Ctrl+o prefers a GitHub PR link, without trailing punctuation", function()
+    local from_data = overview.first_pr {
+      data = {
+        prs = {
+          { url = "https://jira.example.com/browse/SD-1" },
+          { url = "https://github.com/o/r/pull/7)." },
+        },
+      },
+    }
+    assert.equals("https://github.com/o/r/pull/7", from_data)
+    local from_md = overview.first_pr {
+      lines = {
+        "# PRs",
+        "- Fix (see https://jira.example.com/browse/SD-1): https://github.com/o/r/pull/5.",
+      },
+    }
+    assert.equals("https://github.com/o/r/pull/5", from_md)
+    local other = overview.first_pr { lines = { "# PRs", "- MR: https://gitlab.example.com/o/r/-/merge_requests/3," } }
+    assert.equals("https://gitlab.example.com/o/r/-/merge_requests/3", other)
+  end)
+
   it("says so when there are no Claude tabs", function()
     local messages = H.capture_notify()
     H.sleep_tab()

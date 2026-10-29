@@ -1,5 +1,5 @@
 -- lua/floatterm/notes: where notes live, switching them on and off, the captures,
--- tidying away empty notes, Claude's pop-up, sharing with another nvim, and the
+-- never deleting notes for you, Claude's pop-up, sharing with another nvim, and the
 -- picker's filtering.
 
 local H = require "test_helpers"
@@ -133,7 +133,7 @@ describe("notes", function()
     end)
   end)
 
-  describe("empty notes", function()
+  describe("never deleted for you", function()
     local function close(buf)
       ft.close_tab(buf)
       H.wait(3000, function()
@@ -142,34 +142,145 @@ describe("notes", function()
       H.flush(50)
     end
 
-    it("deletes a note with nothing but its heading when its tab closes", function()
+    it("keeps a note with only its heading when its tab closes, notes go off, or the tab takes other notes", function()
       local buf = H.sleep_tab { label = "api" }
       notes.set(buf, true)
-      local mine = notes.paths(ft.record(buf)).mine
+      local closed = notes.paths(ft.record(buf)).mine
       close(buf)
-      assert.is_false(H.exists(mine))
+      assert.is_true(H.exists(closed))
+
+      buf = H.sleep_tab { label = "api" }
+      notes.set(buf, true)
+      local off = notes.paths(ft.record(buf)).mine
+      notes.set(buf, false)
+      assert.is_true(H.exists(off))
+
+      notes.set(buf, true)
+      local before = notes.paths(ft.record(buf)).mine
+      H.write(notes.dir() .. "/20261029-othr.md", "# other\n\nsomething\n")
+      notes.attach(buf, "20261029-othr")
+      assert.is_true(H.exists(before))
     end)
 
-    it("keeps one with something written, a changed heading, or Claude's part", function()
-      local kept = {}
-      for _, case in ipairs { "written", "heading", "claude" } do
-        local buf = H.sleep_tab { label = "api" }
-        notes.set(buf, true)
-        local p = notes.paths(ft.record(buf))
-        if case == "written" then
-          H.write(p.mine, "# api\n\nremember this\n")
-        elseif case == "heading" then
-          H.write(p.mine, "# login work\n")
-        else
-          H.write(p.claude, "summary\n")
-        end
-        vim.cmd "checktime"
-        kept[case] = p.mine
-        close(buf)
+    it("leaves notes with nothing in them out of the picker", function()
+      local dir = notes.dir()
+      vim.fn.mkdir(dir, "p")
+      H.write(dir .. "/20261029-head.md", "# api\n\n")
+      H.write(dir .. "/20261029-blnk.md", "\n")
+      H.write(dir .. "/20261029-mtcl.md", "# api\n")
+      H.write(dir .. "/20261029-mtcl.claude.md", "")
+      H.write(dir .. "/20261029-text.md", "# api\n\nremember this\n")
+      H.write(dir .. "/20261029-clmd.md", "# api\n")
+      H.write(dir .. "/20261029-clmd.claude.md", "summary\n")
+      H.write(dir .. "/20261029-cljs.md", "# api\n")
+      H.write(dir .. "/20261029-cljs.claude.json", vim.json.encode { summary = "s" })
+      local captured
+      H.stub(require "telescope.pickers", "new", function(_, opts)
+        captured = opts
+        return { find = function() end }
+      end)
+      notes.pick()
+      local ids = {}
+      for _, note in ipairs(captured.finder.results) do
+        table.insert(ids, note.value.id)
       end
-      for case, path in pairs(kept) do
-        assert.is_true(H.exists(path), case)
-      end
+      table.sort(ids)
+      assert.same({ "20261029-cljs", "20261029-clmd", "20261029-text" }, ids)
+    end)
+  end)
+
+  describe("captures into notes another nvim changed", function()
+    local buf, mine, path
+
+    -- Another nvim's save: new text with an mtime a little ahead, so it counts as a
+    -- change without waiting a second.
+    local function other_save(text)
+      H.write(path, text)
+      local later = os.time() + 5
+      vim.uv.fs_utime(path, later, later)
+    end
+
+    before_each(function()
+      buf = H.sleep_tab { label = "api" }
+      notes.set(buf, true)
+      notes.redraw()
+      path = notes.paths(ft.record(buf)).mine
+      mine = vim.fn.bufnr(path)
+    end)
+
+    it("reloads first, so the capture goes after what the other nvim saved", function()
+      other_save "# api\n\nfrom the other nvim\n"
+      H.answer_input "mine"
+      notes.add_note()
+      local lines = lines_of(path)
+      assert.equals("from the other nvim", lines[3])
+      assert.truthy(lines[#lines]:match "^%- %d%d:%d%d mine$")
+      assert.same(lines, vim.split(vim.trim(table.concat(api.nvim_buf_get_lines(mine, 0, -1, false), "\n")), "\n"))
+      assert.is_false(vim.bo[mine].modified)
+    end)
+
+    it("with unsaved typing here, keeps both and adds the capture at the end", function()
+      api.nvim_buf_set_lines(mine, -1, -1, false, { "typed here" })
+      assert.is_true(vim.bo[mine].modified)
+      other_save "# api\n\nfrom the other nvim\n"
+      H.edit(paths.start .. "/code.lua", { "local x = 1" })
+      H.capture_notify()
+      notes.capture()
+      local text = H.read(path)
+      assert.truthy(text:find("from the other nvim", 1, true))
+      assert.truthy(text:find("typed here", 1, true))
+      assert.truthy(text:find("local x = 1", 1, true))
+      assert.truthy(text:find("from the other nvim", 1, true) < text:find("local x = 1", 1, true))
+      assert.is_false(vim.bo[mine].modified)
+    end)
+  end)
+
+  describe("Claude's sheet from another nvim", function()
+    local buf, record, claude_win
+
+    local function sheet_text()
+      return table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(notes.state().claude), 0, -1, false), "\n")
+    end
+
+    local function write_sheet(summary)
+      local p = notes.paths(record)
+      H.write(p.claude_json, vim.json.encode { summary = summary })
+      local later = os.time() + 5
+      vim.uv.fs_utime(p.claude_json, later, later)
+    end
+
+    before_each(function()
+      buf = H.sleep_tab { label = "api", kind = "claude" }
+      notes.set(buf, true)
+      record = ft.record(buf)
+      H.write(notes.paths(record).claude_json, vim.json.encode { summary = "first sheet" })
+      notes.redraw()
+      claude_win = notes.state().claude
+    end)
+
+    it("draws the new sheet on the next redraw without being told", function()
+      assert.truthy(sheet_text():find("first sheet", 1, true))
+      write_sheet "second sheet"
+      notes.redraw()
+      assert.truthy(sheet_text():find("second sheet", 1, true))
+      assert.is_true(api.nvim_win_is_valid(claude_win))
+    end)
+
+    it("picks it up on its own while the pane shows", function()
+      write_sheet "third sheet"
+      H.wait(4000, function()
+        return sheet_text():find("third sheet", 1, true) ~= nil
+      end, "the pane didn't pick up the new sheet")
+    end)
+  end)
+
+  describe("reading files that aren't", function()
+    it("reads a .claude.md that's a folder as empty", function()
+      vim.fn.mkdir(notes.dir() .. "/20261029-fold.claude.md", "p")
+      local summary, tags = notes.claude_summary "20261029-fold"
+      assert.equals("", summary)
+      assert.same({}, tags)
+      assert.same({ lines = {} }, notes.claude_sheet "20261029-fold")
     end)
   end)
 
@@ -247,6 +358,42 @@ describe("notes", function()
       local count = api.nvim_buf_line_count(mine_buf)
       assert.equals("", api.nvim_buf_get_lines(mine_buf, count - 1, count, false)[1])
       assert.is_false(vim.bo[mine_buf].modified)
+    end)
+
+    it("puts the empty typing line back after the other nvim's save is picked up", function()
+      local buf = H.sleep_tab { label = "api" }
+      notes.set(buf, true)
+      notes.redraw()
+      local win = notes.state().mine
+      api.nvim_set_current_win(win)
+      H.flush(100)
+      local mine_buf = api.nvim_win_get_buf(win)
+      local path = notes.paths(ft.record(buf)).mine
+      H.write(path, "# api\n\nfrom the other nvim\n")
+      local later = os.time() + 5
+      vim.uv.fs_utime(path, later, later)
+      -- Typing, the reload happens. What it left is read from a timer, as x! stays in
+      -- insert mode until something ends it.
+      local seen
+      vim.defer_fn(function()
+        seen = {
+          lines = api.nvim_buf_get_lines(mine_buf, 0, -1, false),
+          cursor = api.nvim_win_get_cursor(win),
+          modified = vim.bo[mine_buf].modified,
+          mode = api.nvim_get_mode().mode,
+        }
+        api.nvim_input "<Esc>"
+      end, 100)
+      keys("A<Cmd>checktime " .. mine_buf .. "<CR>", "x!")
+      H.wait(2000, function()
+        return seen ~= nil
+      end)
+      local lines = seen.lines
+      assert.equals("from the other nvim", lines[#lines - 1])
+      assert.equals("", lines[#lines])
+      assert.same({ #lines, 0 }, seen.cursor)
+      assert.is_false(seen.modified)
+      assert.equals("i", seen.mode)
     end)
   end)
 
