@@ -338,6 +338,9 @@ local function show_lines(buf, lines, highlights)
   end
 end
 
+-- Notes whose old-format Claude sheet has been sent for rewriting this session.
+local upgrading = {}
+
 -- What Claude's files are on disk now: their mtimes and sizes in one string.
 local function claude_stamp(note_id)
   local paths = paths_for(note_id)
@@ -517,6 +520,19 @@ local function draw(record, box, overlay)
   ) and box.height >= 6
 
   local top, height = box.row, box.height
+  -- A sheet written before Claude's notes came as data has no .json: have it rewritten
+  -- in the current shape once, rather than showing the old one until the next turn.
+  if show_claude and record.kind == "claude" and record.note_id and not upgrading[record.note_id] then
+    local sheet = current_sheet(record.note_id)
+    if sheet and not sheet.data and vim.uv.fs_stat(paths.claude) then
+      upgrading[record.note_id] = true
+      vim.schedule(function()
+        pcall(function()
+          require("floatterm.claude_notes").upgrade(record)
+        end)
+      end)
+    end
+  end
   if show_claude then
     local cbuf = claude_buf(record.note_id)
     -- At the part's width, so the bar fits it.

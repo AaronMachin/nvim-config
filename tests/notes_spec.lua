@@ -133,6 +133,30 @@ describe("notes", function()
     end)
   end)
 
+  it("has an old-format Claude sheet (no .json) rewritten once when it's shown", function()
+    local cn = require "floatterm.claude_notes"
+    local asked = {}
+    local real = cn.upgrade
+    cn.upgrade = function(record)
+      table.insert(asked, record.note_id)
+    end
+    local buf = H.sleep_tab { label = "api", kind = "claude" }
+    ft.update(buf, { transcript_path = paths.start .. "/t.jsonl" })
+    notes.set(buf, true)
+    local p = notes.paths(ft.record(buf))
+    H.write(p.claude, "## Now\n- old shape\n")
+    ft.toggle()
+    ft.toggle()
+    notes.redraw()
+    H.wait(2000, function()
+      return #asked > 0
+    end)
+    notes.redraw()
+    H.flush(100)
+    cn.upgrade = real
+    assert.same({ ft.record(buf).note_id }, asked)
+  end)
+
   describe("never deleted for you", function()
     local function close(buf)
       ft.close_tab(buf)

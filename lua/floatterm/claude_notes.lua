@@ -924,6 +924,15 @@ function M.refresh(record)
   end
 end
 
+-- Rewrites an old-format sheet (from before Claude's notes came as data) in the
+-- current shape now, rather than at the tab's next turn. Quiet: nothing is said when
+-- it can't run (no conversation yet, another tab keeps these notes).
+function M.upgrade(record)
+  if settings.get "claude_notes" and record and record.transcript_path and keeps(record) then
+    start(record, 0)
+  end
+end
+
 -- A closed tab's run state goes with it.
 vim.api.nvim_create_autocmd("User", {
   group = vim.api.nvim_create_augroup("floatterm_claude_notes", { clear = true }),
