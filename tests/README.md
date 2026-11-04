@@ -28,7 +28,7 @@ Restore and the remembered placement need a fresh nvim per case, so those specs 
 | --- | --- |
 | `floatterm_spec.lua` | settings, tab records and events, placements (docked, box, full, split), moves, tab bar and notes room, previous/next/move tab, force-close, unwrapped copy |
 | `groups_spec.lua` | tabs under a parent: `g` and loops refused, the tree in both bar layouts, `za`, next/previous and moves, group headings, the `.superpowers` suggestion (owner from a transcript, asking once, a new group), WORKSTREAMS and "part of" in the large view, saving and restoring the links |
-| `tabbar_spec.lua` | the bar's lines down the left and along the top, fitting and truncating, the bookmark |
+| `tabbar_spec.lua` | the bar's lines down the left and along the top, fitting and truncating, the bookmark , the key hints popup (follows the selection, goes on leaving the bar) |
 | `config_page_spec.lua` | a row per setting, changing values with the page's keys |
 | `menu_spec.lua` | `<leader>o` keys and their descriptions with shortcuts, the panel |
 | `claude_spec.lua` | hook events to record fields, which Claude a tab listens to |

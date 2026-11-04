@@ -39,6 +39,8 @@ local rows_drawn = {}
 local selected = nil
 -- While a parent is being picked: per record, the number to type for it (show_numbers).
 local numbers = nil
+-- The popup beside the selected tab saying what the keys do (defined below redraw).
+local update_hint, close_hint
 local timer = nil
 local busy = false
 -- How many times `ps` has been started. For tests and debugging.
@@ -68,6 +70,8 @@ local function set_highlights()
   api.nvim_set_hl(0, "FloatTermGroup", { link = "Title", default = true })
   api.nvim_set_hl(0, "FloatTermTree", { link = "FloatBorder", default = true })
   api.nvim_set_hl(0, "FloatTermNumber", { link = "IncSearch", default = true })
+  api.nvim_set_hl(0, "FloatTermHintKey", { link = "Function", default = true })
+  api.nvim_set_hl(0, "FloatTermHintBorder", { link = "Function", default = true })
 end
 set_highlights()
 
@@ -410,6 +414,7 @@ local function close()
   end
   bar_win = nil
   selected = nil
+  close_hint()
 end
 
 local function is_open()
@@ -548,6 +553,7 @@ function M.redraw()
     vim.wo[bar_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
   end
 
+  update_hint()
   if selected then
     place_cursor()
   elseif not is_horizontal() and entries[current] then
@@ -560,6 +566,144 @@ function M.redraw()
       end
     end)
   end
+end
+
+-- The key hints ----------------------------------------------------------------
+
+local hint_win, hint_buf = nil, nil
+local hint_ns = api.nvim_create_namespace "floatterm_tabbar_hint"
+
+close_hint = function()
+  if hint_win and api.nvim_win_is_valid(hint_win) then
+    api.nvim_win_close(hint_win, true)
+  end
+  hint_win = nil
+end
+
+-- What the popup says for `record`: a heading, what kind of tab it is, then the keys
+-- that do something to it. Each line is a list of { text, hl } chunks.
+local function hint_rows(record)
+  local floatterm = require "floatterm"
+  local groups = require "floatterm.groups"
+  local rows = {}
+  local under = #groups.children(record)
+  local kind
+  if record.kind == "group" then
+    table.insert(rows, { { "▾ " .. floatterm.name(record), "FloatTermGroup" } })
+    kind = "Group heading"
+  elseif record.kind == "claude" then
+    local text, hl = state_text(record)
+    table.insert(rows, { { text, hl }, { " · " .. (M.summary(record) or floatterm.name(record)), nil } })
+    kind = "Claude tab"
+  else
+    table.insert(rows, { { "$ " .. floatterm.name(record), nil } })
+    kind = M.is_running(record) and (record.command .. " running") or "Terminal"
+  end
+  if under > 0 then
+    kind = kind .. " · " .. under .. (under == 1 and " tab" or " tabs") .. " under it"
+  elseif groups.parent(record) then
+    kind = kind .. " · under " .. floatterm.name(groups.parent(record))
+  end
+  table.insert(rows, { { kind, "FloatTermWorking" } })
+  table.insert(rows, { { "", nil } })
+
+  local move = is_horizontal() and "H / L" or "K / J"
+  local keys = {
+    { "Enter", "open it" },
+    { "r", "rename" },
+    { "g", "put under another tab" },
+  }
+  if under > 0 then
+    table.insert(keys, {
+      "za",
+      (record.children_folded and "unfold its " or "fold its ")
+        .. under
+        .. (under == 1 and " tab" or " tabs")
+        .. (record.children_folded and "" or " away"),
+    })
+  end
+  table.insert(keys, { move, "move earlier / later" })
+  local asks = record.kind == "claude" or M.is_running(record)
+  table.insert(keys, { "x", asks and "close (asks first)" or "close" })
+  for _, key in ipairs(keys) do
+    table.insert(rows, { { string.format("%-7s", key[1]), "FloatTermHintKey" }, { key[2], nil } })
+  end
+  table.insert(rows, { { "", nil } })
+  local step = is_horizontal() and "h/l" or "j/k"
+  table.insert(rows, { { step .. " move · 1-9 open · Esc back", "FloatTermWorking" } })
+  return rows
+end
+
+-- Shows the popup beside the selected tab while the cursor is in the bar, and moves it
+-- with the selection; closes it otherwise (and while a parent is being picked, when
+-- the prompt says what to type).
+update_hint = function()
+  local span = selected and entries[selected]
+  local row = selected and rows_drawn[selected]
+  if not (span and row and is_open() and api.nvim_get_current_win() == bar_win and not numbers) then
+    close_hint()
+    return
+  end
+  local rows = hint_rows(row.record)
+  local lines, width = {}, 0
+  for n, chunks in ipairs(rows) do
+    local text = ""
+    for _, chunk in ipairs(chunks) do
+      text = text .. chunk[1]
+    end
+    lines[n] = " " .. text
+    width = math.max(width, vim.fn.strdisplaywidth(lines[n]) + 1)
+  end
+  if not (hint_buf and api.nvim_buf_is_valid(hint_buf)) then
+    hint_buf = api.nvim_create_buf(false, true)
+  end
+  vim.bo[hint_buf].modifiable = true
+  api.nvim_buf_set_lines(hint_buf, 0, -1, false, lines)
+  vim.bo[hint_buf].modifiable = false
+  api.nvim_buf_clear_namespace(hint_buf, hint_ns, 0, -1)
+  for n, chunks in ipairs(rows) do
+    local col = 1
+    for _, chunk in ipairs(chunks) do
+      if chunk[2] and #chunk[1] > 0 then
+        api.nvim_buf_set_extmark(hint_buf, hint_ns, n - 1, col, { end_col = col + #chunk[1], hl_group = chunk[2] })
+      end
+      col = col + #chunk[1]
+    end
+  end
+
+  -- Beside the tab's first line down the left; under its segment along the top.
+  local config = { relative = "win", win = bar_win, width = width, height = #lines }
+  if is_horizontal() then
+    config.row, config.col = 1, math.max(0, span.start_cell or 0)
+  else
+    local top = api.nvim_win_call(bar_win, function()
+      return vim.fn.line "w0"
+    end)
+    config.row, config.col = span.first - (top - 1) - 1, api.nvim_win_get_width(bar_win) + 1
+  end
+  if hint_win and api.nvim_win_is_valid(hint_win) then
+    api.nvim_win_set_config(hint_win, config)
+  else
+    config.style = "minimal"
+    config.border = "rounded"
+    config.focusable = false
+    config.noautocmd = true
+    config.zindex = 60
+    hint_win = api.nvim_open_win(hint_buf, false, config)
+    vim.wo[hint_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatTermHintBorder"
+  end
+end
+
+function M.hint_window()
+  return hint_win and api.nvim_win_is_valid(hint_win) and hint_win or nil
+end
+
+-- The popup's text, one string per line ({} when it isn't showing). For tests.
+function M.hint_lines()
+  if not (hint_win and api.nvim_win_is_valid(hint_win)) then
+    return {}
+  end
+  return vim.tbl_map(vim.trim, api.nvim_buf_get_lines(hint_buf, 0, -1, false))
 end
 
 local pending = false
@@ -780,6 +924,7 @@ function M.map_bar_keys(buf)
   api.nvim_create_autocmd("WinLeave", {
     buffer = buf,
     callback = function()
+      close_hint()
       vim.schedule(function()
         if is_open() and api.nvim_get_current_win() ~= bar_win then
           selected = nil

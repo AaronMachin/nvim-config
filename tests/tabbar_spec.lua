@@ -3,6 +3,7 @@
 
 local H = require "test_helpers"
 
+local api = vim.api
 local ft, tabbar, settings
 
 local function claude_tab(fields)
@@ -100,6 +101,49 @@ describe("tab bar", function()
       assert.equals(first, ft.current_buf())
       assert.equals(first, vim.api.nvim_get_current_buf())
       assert.is_false(vim.tbl_contains(commands, "startinsert"))
+    end)
+  end)
+
+  describe("the key hints", function()
+    local function press(text)
+      api.nvim_feedkeys(api.nvim_replace_termcodes(text, true, false, true), "x", false)
+    end
+
+    it("show beside the selected tab while in the bar, follow it, and go on Esc", function()
+      local lead = claude_tab { label = "lead", status = "needs_you", title = "Plan workstreams" }
+      local child = H.sleep_tab { label = "child" }
+      require("floatterm.groups").set_parent(child, lead)
+      H.sleep_tab { label = "solo" }
+      ft.focus_buf(lead)
+      assert.same({}, tabbar.hint_lines())
+      tabbar.enter()
+      local lines = tabbar.hint_lines()
+      assert.truthy(lines[1]:find "^● needs you · .*Plan workstreams$", lines[1])
+      assert.equals("Claude tab · 1 tab under it", lines[2])
+      assert.truthy(vim.tbl_contains(lines, "Enter  open it"))
+      assert.truthy(vim.tbl_contains(lines, "za     fold its 1 tab away"))
+      assert.truthy(vim.tbl_contains(lines, "x      close (asks first)"))
+      -- Beside the first line of the tab it's on.
+      local first_row = api.nvim_win_get_config(tabbar.hint_window()).row
+      press "j"
+      lines = tabbar.hint_lines()
+      assert.equals("$ child", lines[1])
+      assert.equals("Terminal · under lead", lines[2])
+      assert.is_false(vim.tbl_contains(lines, "za     fold its 1 tab away"))
+      assert.truthy(vim.tbl_contains(lines, "x      close"))
+      assert.is_true(api.nvim_win_get_config(tabbar.hint_window()).row > first_row)
+      press "<Esc>"
+      vim.cmd "stopinsert"
+      assert.same({}, tabbar.hint_lines())
+    end)
+
+    it("say H / L and h/l along the top", function()
+      settings.set("tabbar", "top")
+      H.sleep_tab { label = "one" }
+      tabbar.enter()
+      local lines = tabbar.hint_lines()
+      assert.truthy(vim.tbl_contains(lines, "H / L  move earlier / later"), table.concat(lines, "\n"))
+      assert.equals("h/l move · 1-9 open · Esc back", lines[#lines])
     end)
   end)
 
