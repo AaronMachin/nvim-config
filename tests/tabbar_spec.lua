@@ -56,6 +56,53 @@ describe("tab bar", function()
     end)
   end)
 
+  describe("a click on a tab", function()
+    -- Headless nvim has no screen to click on, so the click's position is given as nvim
+    -- would report it, at the first cell of the tab's line in the bar. Typing mode
+    -- doesn't show in a headless run, so what's checked is whether the click asked
+    -- for it.
+    local function click_tab(label)
+      tabbar.redraw()
+      local win = tabbar.window()
+      local row
+      for i, line in ipairs(tabbar.lines()) do
+        if line:find(label, 1, true) then
+          row = i
+        end
+      end
+      local pos = vim.api.nvim_win_get_position(win)
+      H.stub(vim.fn, "getmousepos", function()
+        return { screenrow = pos[1] + row + 1, screencol = pos[2] + 3, winid = win, line = row, column = 2 }
+      end)
+      local commands = {}
+      local cmd = vim.cmd
+      H.stub(vim, "cmd", function(command)
+        table.insert(commands, command)
+        return cmd(command)
+      end)
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<LeftMouse>", true, false, true), "x", false)
+      H.flush(50)
+      vim.cmd = cmd
+      return commands
+    end
+
+    before_each(function()
+      tabbar.setup()
+      settings.set("tabbar", "left")
+    end)
+
+    it("opens it in normal mode when you weren't typing, so a click never starts typing", function()
+      local first = H.sleep_tab { label = "first" }
+      H.sleep_tab { label = "second" }
+      vim.cmd "stopinsert"
+      H.flush(50)
+      local commands = click_tab "first"
+      assert.equals(first, ft.current_buf())
+      assert.equals(first, vim.api.nvim_get_current_buf())
+      assert.is_false(vim.tbl_contains(commands, "startinsert"))
+    end)
+  end)
+
   describe("down the left", function()
     it("shows state, summary and folder for Claude, folder for a shell, and marks the current tab", function()
       H.sleep_tab { label = "shell" }

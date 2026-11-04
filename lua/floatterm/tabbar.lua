@@ -838,8 +838,11 @@ local function on_click()
   if not record then
     return ""
   end
+  -- Typing carries on if you were typing in the terminal; otherwise (Ctrl+x, or from
+  -- the code) the tab opens in normal mode, and i starts typing.
+  local typing = api.nvim_get_mode().mode == "t"
   vim.schedule(function()
-    floatterm.focus_buf(record.buf)
+    floatterm.focus_buf(record.buf, { typing = typing })
   end)
   return ""
 end

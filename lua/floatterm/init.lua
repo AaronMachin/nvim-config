@@ -587,8 +587,10 @@ local function open_split(buf)
   vim.wo[win].winfixwidth = not horizontal
 end
 
--- Puts the current tab's buffer in the float, opening the float if it's hidden.
-local function show_current()
+-- Puts the current tab's buffer in the float, opening the float if it's hidden, and
+-- starts typing in it unless `opts.typing` is false.
+local function show_current(opts)
+  local typing = not (opts and opts.typing == false)
   -- A group heading has nothing to show: the nearest real tab after it (its first
   -- child), else before it.
   if tabs[current].kind == "group" then
@@ -630,7 +632,7 @@ local function show_current()
     sync_split_notes()
     vim.wo[win].winbar = bar_win and "" or title({}):gsub("%%", "%%%%")
     api.nvim_set_current_win(win)
-    vim.cmd "startinsert"
+    vim.cmd(typing and "startinsert" or "stopinsert")
     fire("FloatTermLayoutChanged", { open = true })
     fire "FloatTermTabsChanged"
     return
@@ -651,7 +653,7 @@ local function show_current()
 
   show_hints()
   api.nvim_set_current_win(win)
-  vim.cmd "startinsert"
+  vim.cmd(typing and "startinsert" or "stopinsert")
   fire("FloatTermLayoutChanged", { open = true })
   fire "FloatTermTabsChanged"
 end
@@ -964,7 +966,8 @@ function M.update(buf, fields)
 end
 
 -- Shows the tab holding `buf`, opening the float if it's hidden. False if no tab does.
-function M.focus_buf(buf)
+-- `opts.typing = false` leaves it in normal mode rather than typing.
+function M.focus_buf(buf, opts)
   local i = index_of(buf)
   if not i then
     return false
@@ -984,7 +987,7 @@ function M.focus_buf(buf)
     end
   end
   current = i
-  show_current()
+  show_current(opts)
   return true
 end
 
