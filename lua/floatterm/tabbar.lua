@@ -37,6 +37,8 @@ local entries = {}
 local rows_drawn = {}
 -- The row the cursor is on while it's in the bar.
 local selected = nil
+-- While a parent is being picked: per record, the number to type for it (show_numbers).
+local numbers = nil
 local timer = nil
 local busy = false
 -- How many times `ps` has been started. For tests and debugging.
@@ -65,6 +67,7 @@ local function set_highlights()
   api.nvim_set_hl(0, "FloatTermSelected", { link = "Visual", default = true })
   api.nvim_set_hl(0, "FloatTermGroup", { link = "Title", default = true })
   api.nvim_set_hl(0, "FloatTermTree", { link = "FloatBorder", default = true })
+  api.nvim_set_hl(0, "FloatTermNumber", { link = "IncSearch", default = true })
 end
 set_highlights()
 
@@ -227,6 +230,20 @@ local function tree_prefix(row)
   return rails .. (row.last and "└ " or "├ "), rails .. (row.last and "  " or "│ ")
 end
 
+-- The number to type for a tab while a parent is being picked, padded so the tabs
+-- still line up; blank for a tab that can't be picked.
+local function number_chunk(record)
+  local widest = 0
+  for _, n in pairs(numbers) do
+    widest = math.max(widest, #tostring(n))
+  end
+  local n = numbers[record]
+  if not n then
+    return { string.rep(" ", widest + 1), nil }
+  end
+  return { string.rep(" ", widest - #tostring(n)) .. n, "FloatTermNumber" }
+end
+
 local function render_vertical(rows, current, height, width)
   local level, all
   local roots = 0
@@ -258,6 +275,11 @@ local function render_vertical(rows, current, height, width)
     for n, line in ipairs(lines) do
       local marker = (n == 1 and i == current) and "▶ " or "  "
       local chunks = { { marker, nil } }
+      if numbers then
+        local number = n == 1 and number_chunk(rows[i].record) or { string.rep(" ", #number_chunk(rows[i].record)[1]) }
+        table.insert(chunks, number)
+        table.insert(chunks, { " ", nil })
+      end
       if head ~= "" then
         table.insert(chunks, { n == 1 and head or rest, "FloatTermTree" })
       end
@@ -329,6 +351,10 @@ local function render_horizontal(rows, current, width, shown)
     for i, row in ipairs(rows) do
       local chunks = horizontal_tab(row.record, try[1], try[2], row)
       table.insert(chunks, 1, { i == current and "▶ " or "", nil })
+      if numbers and numbers[row.record] then
+        table.insert(chunks, 2, { tostring(numbers[row.record]), "FloatTermNumber" })
+        table.insert(chunks, 3, { " ", nil })
+      end
       segments[i] = chunks
       total = total + chunks_width(chunks) + (i > 1 and vim.fn.strdisplaywidth(SEPARATOR) or 0)
     end
@@ -547,6 +573,14 @@ local function schedule_redraw()
     pending = false
     M.redraw()
   end)
+end
+
+-- Shows a number beside each tab in `map` (record -> number), for picking one by
+-- typing it; nil takes them away. Returns whether the bar is showing.
+function M.show_numbers(map)
+  numbers = map
+  M.redraw()
+  return is_open()
 end
 
 -- The bar's text, one string per line. For tests and debugging.

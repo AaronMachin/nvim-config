@@ -262,18 +262,12 @@ local function glyph(record)
   return record.kind == "claude" and "✳ " or "$ "
 end
 
--- `g` in the tab bar: a picker of the tabs `buf` can go under, and "none".
-function M.pick_parent(buf)
+-- When the tab bar isn't showing: a list of the tabs `buf` can go under, and "none".
+local function pick_from_list(buf, record, choices)
   local floatterm = ft()
-  local record = floatterm.record(buf)
-  if not record then
-    return
-  end
   local items = { { text = "none" } }
-  for _, other in ipairs(floatterm.tabs()) do
-    if other ~= record and not M.is_under(other, record) then
-      table.insert(items, { text = floatterm.name(other), record = other })
-    end
+  for _, other in ipairs(choices) do
+    table.insert(items, { text = floatterm.name(other), record = other })
   end
   vim.ui.select(items, {
     prompt = "Put " .. floatterm.name(record) .. " under",
@@ -285,6 +279,49 @@ function M.pick_parent(buf)
       return
     end
     M.set_parent(buf, choice.record and choice.record.buf or nil)
+  end)
+end
+
+-- `g` in the tab bar and <leader>tp: numbers the tabs `buf` can go under in the tab
+-- bar and asks for one (0 for none). Without the bar, a list instead.
+function M.pick_parent(buf)
+  local floatterm = ft()
+  local record = floatterm.record(buf)
+  if not record then
+    return
+  end
+  local choices, numbers = {}, {}
+  for _, row in ipairs(M.rows()) do
+    local other = row.record
+    if other ~= record and not M.is_under(other, record) then
+      table.insert(choices, other)
+      numbers[other] = #choices
+    end
+  end
+  local tabbar = require "floatterm.tabbar"
+  if not tabbar.show_numbers(numbers) then
+    tabbar.show_numbers(nil)
+    pick_from_list(buf, record, choices)
+    return
+  end
+  vim.cmd "redraw"
+  vim.ui.input({ prompt = "Put " .. floatterm.name(record) .. " under tab number (0 for none): " }, function(answer)
+    tabbar.show_numbers(nil)
+    answer = vim.trim(answer or "")
+    if answer == "" then
+      return
+    end
+    local n = tonumber(answer)
+    if n == 0 then
+      M.set_parent(buf, nil)
+      return
+    end
+    local parent = n and choices[n]
+    if not parent then
+      vim.notify("floatterm: no tab numbered " .. answer, vim.log.levels.WARN)
+      return
+    end
+    M.set_parent(buf, parent.buf)
   end)
 end
 

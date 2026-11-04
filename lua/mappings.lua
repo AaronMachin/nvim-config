@@ -105,6 +105,12 @@ require("floatterm.bookmark").setup()
 require("floatterm.config_page").setup()
 require("floatterm.menu").setup()
 require("floatterm.notes").setup()
+map("n", "<leader>tp", function()
+  local buf = require("floatterm").current_buf()
+  if buf then
+    require("floatterm.groups").pick_parent(buf)
+  end
+end, { desc = "terminal put this tab under another" })
 map("n", "<leader>ab", function()
   require("floatterm.bookmark").toggle()
 end, { desc = "claude show or hide the sessions bookmark" })

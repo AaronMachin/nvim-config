@@ -59,21 +59,57 @@ describe("tab groups", function()
   end)
 
   describe("linking", function()
-    it("g in the tab bar picks a parent from the other tabs, and none unlinks", function()
+    it("g in the tab bar numbers the tabs it can go under and asks for one, 0 unlinks", function()
       local lead = H.sleep_tab { label = "lead" }
       H.sleep_tab { label = "other" }
       local child = H.sleep_tab { label = "child" }
       tabbar.enter()
-      local prompts = H.answer_select "lead"
+      local shown
+      H.stub(vim.ui, "input", function(opts, on_confirm)
+        shown = { prompt = opts.prompt, lines = tabbar.lines() }
+        on_confirm "1"
+      end)
       keys "g"
+      -- The bar numbered the other tabs, not this one.
+      assert.truthy(find_line(shown.lines, "1 $ lead"), table.concat(shown.lines, "\n"))
+      assert.truthy(find_line(shown.lines, "2 $ other"))
+      assert.is_nil(find_line(shown.lines, "3 "))
+      assert.equals("Put child under tab number (0 for none): ", shown.prompt)
       assert.equals(ft.record(lead).uid, ft.record(child).parent_uid)
-      assert.equals("Put child under", prompts[1])
+      -- The numbers go once it's answered.
+      assert.is_nil(find_line(draw(), "1 $ lead"))
       -- Right after its parent now.
       assert.same({ "lead", "child", "other" }, names())
-      H.answer_select "none"
+      H.answer_input "0"
       tabbar.enter()
       keys "g"
       assert.is_nil(ft.record(child).parent_uid)
+    end)
+
+    it("along the top too, and a number no tab has changes nothing", function()
+      settings.set("tabbar", "top")
+      H.sleep_tab { label = "lead" }
+      local child = H.sleep_tab { label = "child" }
+      local line
+      H.stub(vim.ui, "input", function(_, on_confirm)
+        line = tabbar.lines()[1]
+        on_confirm "7"
+      end)
+      local messages = H.capture_notify()
+      groups.pick_parent(child)
+      assert.truthy(line:find("1 $ lead", 1, true), line)
+      assert.is_nil(ft.record(child).parent_uid)
+      assert.is_not_nil(H.notified(messages, "no tab numbered 7"))
+    end)
+
+    it("falls back to a list when the tab bar is off", function()
+      settings.set("tabbar", "off")
+      local lead = H.sleep_tab { label = "lead" }
+      local child = H.sleep_tab { label = "child" }
+      local prompts = H.answer_select "lead"
+      groups.pick_parent(child)
+      assert.equals("Put child under", prompts[1])
+      assert.equals(ft.record(lead).uid, ft.record(child).parent_uid)
     end)
 
     it("refuses a tab under itself or under one of its own children", function()
@@ -87,15 +123,14 @@ describe("tab groups", function()
       assert.is_false(groups.set_parent(lead, lead))
       assert.is_nil(ft.record(lead).parent_uid)
       assert.is_not_nil(H.notified(messages, "it's under it"))
-      -- The picker doesn't offer them either.
-      local offered
-      H.stub(vim.ui, "select", function(items)
-        offered = vim.tbl_map(function(item)
-          return item.text
-        end, items)
+      -- The picker doesn't number them either.
+      local lines
+      H.stub(vim.ui, "input", function(_, on_confirm)
+        lines = tabbar.lines()
+        on_confirm(nil)
       end)
       groups.pick_parent(lead)
-      assert.same({ "none" }, offered)
+      assert.is_nil(find_line(lines, "1 "), table.concat(lines, "\n"))
     end)
   end)
 
