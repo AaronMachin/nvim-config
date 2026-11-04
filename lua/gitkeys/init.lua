@@ -62,8 +62,14 @@ function M.open_on_github()
 end
 
 -- Opens the Jira ticket named at the start of the branch, so SD-486-backend opens
--- SD-486.
+-- SD-486, on the Jira site in $JIRA_URL (https://yours.atlassian.net). It's kept out
+-- of the config so the repo doesn't name the site.
 function M.open_ticket()
+  local site = vim.env.JIRA_URL
+  if not site or site == "" then
+    vim.notify("gitkeys: set JIRA_URL to your Jira site (https://yours.atlassian.net)", vim.log.levels.WARN)
+    return
+  end
   local root = vim.fs.root(0, ".git") or vim.uv.cwd()
   local branch = vim.trim(vim.system({ "git", "branch", "--show-current" }, { cwd = root }):wait().stdout or "")
   local key = branch:match "^%u+%-%d+"
@@ -73,7 +79,7 @@ function M.open_ticket()
     return
   end
 
-  vim.ui.open("https://totara.atlassian.net/browse/" .. key)
+  vim.ui.open(site:gsub("/+$", "") .. "/browse/" .. key)
 end
 
 return M

@@ -60,7 +60,7 @@ To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvi
   - `<leader>ay` / `<leader>an` accept or reject Claude's proposed edit
   - In a folder Claude doesn't trust yet, answer its trust prompt before sending anything, or the text is lost
 - `<leader>gm` asks Claude for a commit message for what's staged, in the style of recent commits and starting with the branch's ticket. `:w` commits it
-- `<leader>gj` opens the Jira ticket at the start of the branch name (SD-486-backend opens SD-486)
+- `<leader>gj` opens the Jira ticket at the start of the branch name (SD-486-backend opens SD-486), on the Jira site in `$JIRA_URL` (`export JIRA_URL=https://yours.atlassian.net` in your shell profile)
 - Git worktrees (`lua/worktrees`)
   - `<leader>ww` lists the repo's worktrees with branch, uncommitted files, last commit's age and subject. `⌂` marks the main checkout, `●` the one nvim is in and `✳` one with a Claude tab
   - `Enter` moves nvim there: it saves a session for the worktree it leaves, closes its files and restores the other's session. Terminal tabs keep running. It refuses while a file has unsaved changes
