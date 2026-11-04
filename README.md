@@ -2,7 +2,38 @@
 
 My Neovim config, built on the [NvChad starter](https://github.com/NvChad/starter) (NvChad v2.5). NvChad itself is loaded as a plugin, so this repo only holds what I've changed on top of it.
 
-To use it on a new machine, clone it to `~/.config/nvim` and open nvim. lazy.nvim installs the plugins at the versions in `lazy-lock.json`.
+## Install
+
+On a Mac with [Homebrew](https://brew.sh):
+
+1. Install what it needs:
+   ```sh
+   brew install neovim git ripgrep node lazygit
+   brew install --cask font-jetbrains-mono-nerd-font
+   ```
+   Set your terminal's font to JetBrainsMono Nerd Font (any Nerd Font works), or the icons show as boxes.
+2. Move any config you already have out of the way, then clone this one in its place:
+   ```sh
+   mv ~/.config/nvim ~/.config/nvim.old 2>/dev/null
+   git clone https://github.com/AaronMachin/nvim-config ~/.config/nvim
+   ```
+3. Copy the settings file and fill it in (it's only `JIRA_URL` for now, for `<leader>gj`):
+   ```sh
+   cp ~/.config/nvim/.env.example ~/.config/nvim/.env
+   ```
+4. Open `nvim` and wait for lazy.nvim to install the plugins (at the versions in `lazy-lock.json`), then quit and open it again.
+5. In nvim, install the language servers and the PHP debugger:
+   ```
+   :MasonInstall intelephense typescript-language-server vue-language-server@2.2.8 html-lsp css-lsp json-lsp php-debug-adapter stylua
+   ```
+6. If you use [Claude Code](https://claude.com/claude-code), let it tell the floating terminal what it's doing:
+   ```sh
+   ~/.config/nvim/install-claude-hooks.sh
+   ```
+   Then in Claude, `/config` → Diff tool → `terminal`, so edits to approve show in Claude's tab rather than taking over nvim.
+7. Turn on mouse reporting in your terminal app, so clicks and the mouse wheel reach nvim (Warp: Settings → Features → Enable Mouse Reporting).
+
+To update, `git pull` in `~/.config/nvim` and run `:Lazy restore` so the plugins match `lazy-lock.json`.
 
 `make test` runs the test suite (about 10 seconds, kept apart from your real nvim data; see `tests/README.md`). `make test FILE=tests/notes_spec.lua` runs one file.
 

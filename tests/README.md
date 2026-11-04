@@ -36,6 +36,6 @@ Restore and the remembered placement need a fresh nvim per case, so those specs 
 | `notes_spec.lua` | paths, on/off, captures (into notes another nvim changed too), notes never deleted for you, Claude's sheet reloading, Claude's pop-up, the dossier in the pane and the large view (Tab, Enter, `d`/`t`, clicks, fold state per note), sharing with another nvim, the picker's filtering |
 | `overview_spec.lua` | the Claude overview's order, row text, preview and the link Ctrl+o opens, children grouped under their parent |
 | `restore_spec.lua` | saved sets per nvim, saving, migration, the picker, another nvim's tabs, the 10-set cap |
-| `grepmask_spec.lua`, `testrun_spec.lua`, `git_spec.lua` (gitkeys, pins), `phpstan_spec.lua`, `dbkeys_spec.lua`, `laravel_spec.lua`, `worktrees_spec.lua` | the smaller modules |
+| `grepmask_spec.lua`, `testrun_spec.lua`, `git_spec.lua` (gitkeys, pins), `phpstan_spec.lua`, `dbkeys_spec.lua`, `laravel_spec.lua`, `worktrees_spec.lua`, `localenv_spec.lua` | the smaller modules |
 
 `fixtures/laravel` is a small Laravel-shaped project for the routes spec; it's copied to the temp folder before use.
