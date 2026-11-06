@@ -2,6 +2,18 @@
 
 My Neovim config, built on the [NvChad starter](https://github.com/NvChad/starter) (NvChad v2.5). NvChad itself is loaded as a plugin, so this repo only holds what I've changed on top of it.
 
+Terminal tabs in a float, with a tab bar that says what each key does to the selected tab:
+
+![Terminal tabs and the tab bar](docs/gifs/tabs.gif)
+
+Claude tabs grouped under the session that planned them. `g` numbers the tabs to put one under, `za` folds them away:
+
+![Grouping Claude tabs](docs/gifs/groups.gif)
+
+`<leader>aa` lists every Claude tab, the ones that need you first:
+
+![The Claude tab overview](docs/gifs/overview.gif)
+
 ## Install
 
 On a Mac with [Homebrew](https://brew.sh):
