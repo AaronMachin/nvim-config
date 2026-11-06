@@ -492,4 +492,31 @@ describe("floatterm", function()
       assert.equals(long .. "\n  indented\nnext", ft.unwrapped_selection())
     end)
   end)
+
+  describe("moving along the line in a terminal tab", function()
+    it("sends Esc b/f for Option+arrows and Ctrl+A/E for Cmd+arrows, Home and End", function()
+      local buf = H.sleep_tab()
+      local sent = {}
+      H.stub(api, "nvim_chan_send", function(_, text)
+        table.insert(sent, text)
+      end)
+      for _, lhs in ipairs { "<M-Left>", "<M-Right>", "<D-Left>", "<D-Right>", "<Home>", "<End>" } do
+        vim.fn.maparg(lhs, "t", false, true).callback()
+      end
+      assert.same({ "\27b", "\27f", "\1", "\5", "\1", "\5" }, sent)
+      assert.equals(buf, api.nvim_get_current_buf())
+    end)
+
+    it("passes Home and End on as they are while a program is running", function()
+      local buf = H.sleep_tab()
+      ft.update(buf, { command = "less" })
+      local sent = {}
+      H.stub(api, "nvim_chan_send", function(_, text)
+        table.insert(sent, text)
+      end)
+      vim.fn.maparg("<Home>", "t", false, true).callback()
+      vim.fn.maparg("<M-Left>", "t", false, true).callback()
+      assert.same({ "\27[H", "\27b" }, sent)
+    end)
+  end)
 end)

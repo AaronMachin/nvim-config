@@ -40,6 +40,7 @@ To update, `git pull` in `~/.config/nvim` and run `:Lazy restore` so the plugins
 ## What's added
 
 - A floating terminal with tabs and rounded corners, leaving 10% of the screen open at the top and a small gap at the sides and bottom (`lua/floatterm`)
+  - Option+left/right move a word and Cmd+left/right (or Home/End) go to the start or end of the line, as in the terminal app
   - `<leader>tt` opens it, and `Ctrl+\` (or `Alt+i`) opens or hides it from anywhere, including inside it. Hiding keeps every tab running
   - Inside it, `Ctrl+t` opens a new tab, and `Ctrl+Shift+n` / `Ctrl+Shift+p` move to the next and previous one (`Ctrl+|` also moves to the next, in a terminal app that sends it as its own key), and `Ctrl+Opt+←/→` (or `↑/↓`) move the tab itself earlier or later where the terminal app sends Option as Alt
   - `exit` closes a tab, and closing the last one closes the float

@@ -701,6 +701,40 @@ local function yank_unwrapped()
   api.nvim_feedkeys(api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
 end
 
+-- Option+left/right a word and Cmd+left/right to the start or end of the line, as in
+-- the terminal app. Neovim passes Option+arrow on as an escape sequence zsh has no
+-- binding for, and Cmd+arrow (or the Home/End some terminal apps send for it) the
+-- same, so these send the Emacs keys zsh and Claude both read: Esc b, Esc f, Ctrl+A
+-- and Ctrl+E. Home and End only do that at a shell prompt; a running program (less,
+-- vim) gets them as they are.
+local LINE_KEYS = {
+  { "<M-Left>", "\27b" },
+  { "<M-Right>", "\27f" },
+  { "<D-Left>", "\1" },
+  { "<D-Right>", "\5" },
+  { "<Home>", "\1", "\27[H" },
+  { "<End>", "\5", "\27[F" },
+}
+
+local function map_line_keys(buf)
+  for _, key in ipairs(LINE_KEYS) do
+    vim.keymap.set("t", key[1], function()
+      local job = vim.b[buf].terminal_job_id
+      if not job then
+        return
+      end
+      local text = key[2]
+      if key[3] then
+        local record = M.record(buf)
+        if record and require("floatterm.tabbar").is_running(record) then
+          text = key[3]
+        end
+      end
+      api.nvim_chan_send(job, text)
+    end, { buffer = buf, desc = "terminal " .. key[1] .. " as the shell expects" })
+  end
+end
+
 local function map_tab_keys(buf, modes)
   modes = modes or { "n", "t" }
   local function map(lhs, rhs, desc)
@@ -710,6 +744,7 @@ local function map_tab_keys(buf, modes)
   map("<C-t>", M.new_tab, "terminal new tab")
   if vim.tbl_contains(modes, "t") then
     vim.keymap.set("x", "y", yank_unwrapped, { buffer = buf, desc = "terminal copy without the wrap breaks" })
+    map_line_keys(buf)
   end
   -- Ctrl+Shift+Space, as macOS keeps Ctrl+Space for switching input sources. Plain
   -- Ctrl+Space (<C-Space>, or NUL as <C-@> in some terminal apps) works too where it
