@@ -137,6 +137,43 @@ describe("tab bar", function()
       assert.same({}, tabbar.hint_lines())
     end)
 
+    it("cut a long command to fit, and c shows it in full until the selection moves", function()
+      local long = "podman run --rm -it --name hubdash-local " .. string.rep("-v /var/home/amachin/x:/x:z ", 8)
+      local buf = H.sleep_tab { label = "todo" }
+      H.sleep_tab { label = "other" }
+      ft.update(buf, { command = long })
+      ft.focus_buf(buf)
+      tabbar.enter()
+      local lines = tabbar.hint_lines()
+      for _, line in ipairs(lines) do
+        assert.is_true(vim.fn.strdisplaywidth(line) <= 58, line)
+      end
+      assert.truthy(lines[2]:find "^podman run .*…$", lines[2])
+      assert.truthy(vim.tbl_contains(lines, "c      show the full command"))
+
+      press "c"
+      lines = tabbar.hint_lines()
+      local shown = {}
+      for n = 2, #lines do
+        if lines[n] == "running" then
+          break
+        end
+        table.insert(shown, lines[n])
+      end
+      -- Wrapped lines put back together are the whole command (the lines come back
+      -- trimmed, so a space at a wrap is lost).
+      local function squash(text)
+        return (text:gsub("%s", ""))
+      end
+      assert.is_true(#shown > 1)
+      assert.equals(squash(long), squash(table.concat(shown, "")))
+      assert.truthy(vim.tbl_contains(lines, "c      hide the full command"))
+
+      press "j"
+      press "k"
+      assert.truthy(tabbar.hint_lines()[2]:find "…$")
+    end)
+
     it("say H / L and h/l along the top", function()
       settings.set("tabbar", "top")
       H.sleep_tab { label = "one" }

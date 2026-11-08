@@ -580,14 +580,38 @@ close_hint = function()
   hint_win = nil
 end
 
+-- The widest the popup gets, so a long command doesn't stretch it across the screen.
+local HINT_WIDTH = 60
+-- The tab whose full command the popup is showing (`c`), until the selection moves.
+local full_command_for = nil
+
+-- `text` in lines of at most `width` columns.
+local function wrap(text, width)
+  local lines = {}
+  while vim.fn.strdisplaywidth(text) > width do
+    local chars = width
+    while chars > 1 and vim.fn.strdisplaywidth(vim.fn.strcharpart(text, 0, chars)) > width do
+      chars = chars - 1
+    end
+    table.insert(lines, vim.fn.strcharpart(text, 0, chars))
+    text = vim.fn.strcharpart(text, chars)
+  end
+  table.insert(lines, text)
+  return lines
+end
+
 -- What the popup says for `record`: a heading, what kind of tab it is, then the keys
--- that do something to it. Each line is a list of { text, hl } chunks.
-local function hint_rows(record)
+-- that do something to it. Each line is a list of { text, hl } chunks. `width` is the
+-- room for text: longer lines are cut with … where the popup is drawn, apart from a
+-- running command shown in full with `c`, which wraps.
+local function hint_rows(record, width)
   local floatterm = require "floatterm"
   local groups = require "floatterm.groups"
   local rows = {}
   local under = #groups.children(record)
   local kind
+  -- A command too long for the popup, and whether it's showing in full.
+  local long_command, full = false, false
   if record.kind == "group" then
     table.insert(rows, { { "▾ " .. floatterm.name(record), "FloatTermGroup" } })
     kind = "Group heading"
@@ -598,6 +622,16 @@ local function hint_rows(record)
   else
     table.insert(rows, { { "$ " .. floatterm.name(record), nil } })
     kind = M.is_running(record) and (record.command .. " running") or "Terminal"
+    if M.is_running(record) and vim.fn.strdisplaywidth(kind) > width then
+      long_command = true
+      full = full_command_for == record.buf
+      if full then
+        for _, line in ipairs(wrap(record.command, width)) do
+          table.insert(rows, { { line, nil } })
+        end
+        kind = "running"
+      end
+    end
   end
   if under > 0 then
     kind = kind .. " · " .. under .. (under == 1 and " tab" or " tabs") .. " under it"
@@ -622,6 +656,9 @@ local function hint_rows(record)
         .. (record.children_folded and "" or " away"),
     })
   end
+  if long_command then
+    table.insert(keys, { "c", full and "hide the full command" or "show the full command" })
+  end
   table.insert(keys, { move, "move earlier / later" })
   local asks = record.kind == "claude" or M.is_running(record)
   table.insert(keys, { "x", asks and "close (asks first)" or "close" })
@@ -644,7 +681,21 @@ update_hint = function()
     close_hint()
     return
   end
-  local rows = hint_rows(row.record)
+  if full_command_for ~= row.record.buf then
+    full_command_for = nil
+  end
+  -- No wider than HINT_WIDTH or the room to the right of where it opens.
+  local col
+  if is_horizontal() then
+    col = math.max(0, span.start_cell or 0)
+  else
+    col = api.nvim_win_get_width(bar_win) + 1
+  end
+  local room = vim.o.columns - (api.nvim_win_get_position(bar_win)[2] + col) - 2
+  local inner = math.max(20, math.min(HINT_WIDTH, room)) - 2
+  local rows = vim.tbl_map(function(chunks)
+    return truncate(chunks, inner)
+  end, hint_rows(row.record, inner))
   local lines, width = {}, 0
   for n, chunks in ipairs(rows) do
     local text = ""
@@ -674,12 +725,12 @@ update_hint = function()
   -- Beside the tab's first line down the left; under its segment along the top.
   local config = { relative = "win", win = bar_win, width = width, height = #lines }
   if is_horizontal() then
-    config.row, config.col = 1, math.max(0, span.start_cell or 0)
+    config.row, config.col = 1, col
   else
     local top = api.nvim_win_call(bar_win, function()
       return vim.fn.line "w0"
     end)
-    config.row, config.col = span.first - (top - 1) - 1, api.nvim_win_get_width(bar_win) + 1
+    config.row, config.col = span.first - (top - 1) - 1, col
   end
   if hint_win and api.nvim_win_is_valid(hint_win) then
     api.nvim_win_set_config(hint_win, config)
@@ -897,6 +948,14 @@ function M.map_bar_keys(buf)
   end
   map("x", close_selected, "tab bar close tab")
   map("r", rename_selected, "tab bar rename tab")
+  -- Only does something when the popup offers it (a command too long to show).
+  map("c", function()
+    local record = selected_record()
+    if record then
+      full_command_for = full_command_for ~= record.buf and record.buf or nil
+      update_hint()
+    end
+  end, "tab bar show or hide the full command")
   map("<Esc>", leave, "tab bar back to the terminal")
   map("q", leave, "tab bar back to the terminal")
 
