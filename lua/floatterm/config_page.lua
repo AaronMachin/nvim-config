@@ -61,6 +61,11 @@ local ROWS = {
     label = "Notes side",
     choices = { { "left", "left" }, { "right", "right" }, { "top", "top" }, { "bottom", "bottom" } },
   },
+  {
+    key = "notes_new_tabs",
+    label = "Notes on new tabs",
+    choices = { { "off", "off" }, { "claude", "Claude tabs" }, { "all", "all tabs" } },
+  },
   -- Kept as a fraction, shown and typed as a percentage.
   { key = "notes_share", label = "Notes size", number = { min = 15, max = 60, step = 5, percent = true } },
   {

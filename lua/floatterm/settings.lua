@@ -25,6 +25,10 @@ M.defaults = {
   -- "bottom"), and the share of the terminal's room it takes.
   notes_side = "right",
   notes_share = 0.35,
+  -- Which newly opened tabs start with their notes showing: "off", "claude" (Claude
+  -- tabs, including a shell tab once `claude` starts in it) or "all". Tabs reopened
+  -- on start keep however they were saved.
+  notes_new_tabs = "off",
   -- Whether Claude's half of a Claude tab's notes is kept up to date after each turn
   -- (lua/floatterm/claude_notes), and the model that does it: "haiku" or "sonnet".
   claude_notes = true,

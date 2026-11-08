@@ -41,6 +41,54 @@ describe("notes", function()
     assert.equals(notes.dir() .. "/20261029-abcd.claude.json", p.claude_json)
   end)
 
+  describe("on for new tabs", function()
+    local settings = require "floatterm.settings"
+
+    local function settle()
+      vim.wait(50, function()
+        return false
+      end)
+    end
+
+    it("leaves new tabs without notes when off (the default)", function()
+      local buf = H.sleep_tab { label = "api" }
+      settle()
+      assert.is_nil(ft.record(buf).notes_on)
+    end)
+
+    it("switches them on for every new tab with all tabs", function()
+      settings.set("notes_new_tabs", "all")
+      local buf = H.sleep_tab { label = "api" }
+      settle()
+      local record = ft.record(buf)
+      assert.is_true(record.notes_on)
+      assert.truthy(vim.uv.fs_stat(notes.paths(record).mine))
+    end)
+
+    it("with Claude tabs, skips shell tabs but catches one once claude starts in it", function()
+      settings.set("notes_new_tabs", "claude")
+      local shell = H.sleep_tab { label = "shell" }
+      local started = H.sleep_tab { kind = "claude", label = "claude" }
+      settle()
+      assert.is_nil(ft.record(shell).notes_on)
+      assert.is_true(ft.record(started).notes_on)
+
+      require("floatterm.claude").apply(ft.record(shell), { hook_event_name = "SessionStart", session_id = "a" })
+      settle()
+      assert.is_true(ft.record(shell).notes_on)
+    end)
+
+    it("doesn't switch back on notes you switched off", function()
+      settings.set("notes_new_tabs", "claude")
+      local buf = H.sleep_tab { label = "shell" }
+      settle()
+      notes.set(buf, false)
+      require("floatterm.claude").apply(ft.record(buf), { hook_event_name = "SessionStart", session_id = "a" })
+      settle()
+      assert.is_false(ft.record(buf).notes_on)
+    end)
+  end)
+
   describe("on and off", function()
     it("gives a tab notes with a heading, shows the pane, and hides it again keeping the file", function()
       local buf = H.sleep_tab { label = "api" }

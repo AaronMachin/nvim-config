@@ -927,6 +927,12 @@ function M.restore()
   end
 end
 
+-- Whether saved tabs are being reopened right now (their notes come from the save, not
+-- the "Notes on new tabs" setting).
+function M.restoring()
+  return restoring
+end
+
 -- What this nvim's set is, for tests.
 function M.state()
   return { folder = folder, dir = folder and folder_dir(), current = current, done = done }

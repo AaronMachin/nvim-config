@@ -1720,6 +1720,31 @@ end
 
 local set_up = false
 
+-- The "Notes on new tabs" setting, for a tab that has never had its notes switched on
+-- or off (notes_on nil; off is false). Tabs being reopened on start are left as saved.
+local seen = {}
+local function notes_for_new(record)
+  if record.notes_on ~= nil or record.kind == "group" then
+    return
+  end
+  local restore = package.loaded["floatterm.restore"]
+  if restore and restore.restoring and restore.restoring() then
+    return
+  end
+  local wanted = require("floatterm.settings").get "notes_new_tabs"
+  if wanted == "all" or (wanted == "claude" and record.kind == "claude") then
+    -- After this event, so the change reaches FloatTermTabChanged's listeners (the tab
+    -- bar's ✎) rather than firing inside another event's callback.
+    local buf = record.buf
+    vim.schedule(function()
+      local now = floatterm().record(buf)
+      if now and now.notes_on == nil then
+        M.set(buf, true)
+      end
+    end)
+  end
+end
+
 function M.setup()
   if set_up then
     return
@@ -1739,6 +1764,12 @@ function M.setup()
           keys_added = true
           ft.add_tab_key("<C-S-e>", M.toggle_focus, "terminal into the notes and back")
         end
+        for _, record in ipairs(ft.tabs()) do
+          if not seen[record.buf] then
+            seen[record.buf] = true
+            notes_for_new(record)
+          end
+        end
         -- Visual mode, which add_tab_key doesn't map.
         for _, record in ipairs(ft.tabs()) do
           if not tab_keys[record.buf] then
@@ -1752,6 +1783,11 @@ function M.setup()
         return
       end
       if args.match == "FloatTermTabChanged" then
+        -- `claude` typed in a shell tab makes it a Claude tab.
+        local became = ft and vim.tbl_contains(args.data.fields or {}, "kind") and ft.record(args.data.buf)
+        if became and became.kind == "claude" then
+          notes_for_new(became)
+        end
         -- The tab bar's once-a-second title and command updates don't change the pane.
         -- The status and what Claude asks only matter to the tab whose notes show (the
         -- needs-you line), and are drawn now rather than at the next summary.
