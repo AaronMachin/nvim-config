@@ -393,6 +393,31 @@ describe("restore", function()
       assert.is_false(H.exists(dir .. "/" .. folder_key(project) .. "/" .. out .. ".lock"))
     end)
 
+    it("saves a shell tab whose Claude was stopped from outside as the Claude tab it was", function()
+      local out = H.child(
+        project,
+        [[
+        local r = require "floatterm.restore"
+        r.setup()
+        r.restore()
+        local ft = require "floatterm"
+        local _, buf = ft.new_tab({ "sleep", "300" }, { label = "api" })
+        ft.update(buf, { resume = { session_id = "s7", cwd = "/elsewhere", title = "✳ Reviewing", last_prompt = "go" } })
+        r.save()
+        io.stdout:write(r.state().current or "")
+      ]],
+        { floatterm_tabs_dir = dir, floatterm_restore_headless = true }
+      )
+      local tab = sets_in(dir, project)[out].tabs[1]
+      assert.equals("claude", tab.kind)
+      assert.equals("s7", tab.session_id)
+      assert.equals("/elsewhere", tab.cwd)
+      assert.equals("✳ Reviewing", tab.title)
+      assert.equals("go", tab.last_prompt)
+      assert.equals("done", tab.status)
+      assert.is_nil(tab.last_command)
+    end)
+
     it("never makes a set for an nvim that had no tabs", function()
       H.child(
         project,

@@ -26,7 +26,9 @@
 -- sets are kept; older ones go.
 --
 -- Reopening a set:
---   Claude tabs resume their conversation (`claude --resume <id>`) where it ran. One
+--   Claude tabs resume their conversation (`claude --resume <id>`) where it ran, and so
+--   do shell tabs whose Claude was stopped from outside rather than exited (the
+--   `resume` that lua/floatterm/claude leaves on them, saved as a Claude tab). One
 --   whose conversation was never written (Claude writes it after the first message)
 --   starts a fresh `claude` in its folder instead.
 --   Shell tabs are fresh shells in the same folder. What last ran in one is kept on
@@ -427,6 +429,18 @@ local function snapshot()
       tab.last_prompt = record.last_prompt
       tab.status = record.status == "working" and "done" or record.status
       tab.status_since = record.status_since
+    elseif type(record.resume) == "table" and record.resume.session_id then
+      -- A shell tab whose Claude was stopped from outside (lua/floatterm/claude): saved
+      -- as the Claude tab it was, so it's resumed rather than lost.
+      local resume = record.resume
+      tab.kind = "claude"
+      tab.cwd = resume.cwd or record.cwd
+      tab.session_id = resume.session_id
+      tab.transcript_path = resume.transcript_path
+      tab.start_ref = resume.start_ref
+      tab.title = resume.title
+      tab.last_prompt = resume.last_prompt
+      tab.status = "done"
     else
       -- An idle shell's command is the shell itself, so only a running one counts.
       local ok, tabbar = pcall(require, "floatterm.tabbar")

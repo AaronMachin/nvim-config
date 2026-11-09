@@ -26,6 +26,12 @@
 -- tab's variables, so a `claude -p` it starts reports here too, and is ignored. That
 -- Claude's pid is kept as claude_pid; if it's gone without a SessionEnd (killed), the
 -- tab goes back to being a shell tab within CHECK_EVERY.
+--
+-- A Claude that ended without the user ending it (killed, crashed, or stopped by the
+-- Mac shutting down) leaves its conversation on the shell tab as `resume`, which
+-- lua/floatterm/restore saves as a Claude tab so it's resumed next time. Only exiting
+-- from Claude's prompt (/exit, Ctrl+D), /clear and /logout end a tab's Claude for good.
+-- The next SessionStart in the tab replaces `resume`.
 
 local M = {}
 
@@ -51,6 +57,14 @@ local CLAUDE_FIELDS = {
   "last_prompt",
   "shell_title",
   "claude_pid",
+}
+
+-- SessionEnd reasons that mean the user ended Claude. Any other (or none) means it was
+-- stopped from outside, so the tab keeps what's needed to resume it.
+local ENDED_BY_USER = {
+  prompt_input_exit = true,
+  clear = true,
+  logout = true,
 }
 
 local timer = nil
@@ -119,8 +133,19 @@ local function accepts(record, pid)
 end
 
 -- Makes a Claude tab a shell tab again. start_ref goes too unless `keep_start_ref`.
-local function to_shell(record, keep_start_ref)
+-- With `resumable`, the conversation is kept as `resume` (see the top of this file).
+local function to_shell(record, keep_start_ref, resumable)
   local shell = { kind = "shell" }
+  if resumable and record.kind == "claude" and record.session_id then
+    shell.resume = {
+      session_id = record.session_id,
+      transcript_path = record.transcript_path,
+      cwd = record.cwd,
+      start_ref = record.start_ref,
+      title = record.title ~= record.shell_title and record.title or nil,
+      last_prompt = record.last_prompt,
+    }
+  end
   for _, key in ipairs(CLAUDE_FIELDS) do
     shell[key] = vim.NIL
   end
@@ -147,7 +172,7 @@ local function check()
       if started_in(record, record.claude_pid) then
         watched = watched + 1
       else
-        to_shell(record)
+        to_shell(record, false, true)
       end
     end
   end
@@ -198,6 +223,7 @@ local function apply(record, event, pid)
     -- which may not be where the tab started if the user cd'd first.
     local cwd = type(event.cwd) == "string" and (vim.uv.fs_realpath(event.cwd) or event.cwd) or nil
     claude.cwd = cwd
+    claude.resume = vim.NIL
     claude.transcript_path = type(event.transcript_path) == "string" and event.transcript_path or nil
     -- The shell's own title (user@host:path) is still there until Claude sets one;
     -- the tab bar mustn't show it as what Claude is working on. Only when the tab was a
@@ -244,7 +270,7 @@ local function apply(record, event, pid)
       require("floatterm.claude_notes").on_stop(record)
     end)
   elseif name == "SessionEnd" then
-    to_shell(record, event.reason == "clear")
+    to_shell(record, event.reason == "clear", not ENDED_BY_USER[event.reason])
     return
   end
 
