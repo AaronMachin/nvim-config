@@ -210,10 +210,9 @@ end
 
 -- Down the left side: two lines per tab. The first says what the tab is (a Claude
 -- tab's summary, a shell's command); the second its state, then its folder (or the
--- name it was given with r), which is cut first when the bar is narrow. Levels drop,
--- in turn, the blank line between tabs, then the second line, when the state glyph
--- moves up to the first.
-local function vertical_tab(record, level, row)
+-- name it was given with r), which is cut first when the bar is narrow. When the tabs
+-- don't fit, the blank lines between tabs go, then the bar scrolls.
+local function vertical_tab(record, row)
   if record.kind == "group" then
     local name = require("floatterm").name(record)
     local line = { { (row.folded and "▸ " or "▾ ") .. name, "FloatTermGroup" } }
@@ -226,31 +225,22 @@ local function vertical_tab(record, level, row)
   local first, second
   local name = require("floatterm").name(record)
   if record.kind == "claude" then
-    local state = M.state(record)
     first = { { M.summary(record) or name, nil } }
-    if level < 2 then
-      local text, hl = state_text(record)
-      second = { { text, hl } }
-    else
-      table.insert(first, 1, { state.glyph .. " ", state.hl })
-    end
+    local text, hl = state_text(record)
+    second = { { text, hl } }
   else
     local command, hl = shell_command(record)
     first = { { command, hl } }
-    if level < 2 then
-      second = { { M.is_running(record) and "running" or "idle", "FloatTermWorking" } }
-    end
+    second = { { M.is_running(record) and "running" or "idle", "FloatTermWorking" } }
   end
   -- Its emoji (lua/floatterm/emoji) leads the first line.
   table.insert(first, 1, { require("floatterm.emoji").glyph(record) .. " ", nil })
-  local lines = { first, second }
-  -- Notes on (lua/floatterm/notes), after the state, or at the end of a lone line.
+  -- Notes on (lua/floatterm/notes), after the state.
   if record.notes_on then
-    table.insert(lines[#lines], { " ✎", nil })
+    table.insert(second, { " ✎", nil })
   end
-  if second then
-    table.insert(second, { " · " .. name, "FloatTermWorking" })
-  end
+  table.insert(second, { " · " .. name, "FloatTermWorking" })
+  local lines = { first, second }
   if row.folded then
     table.insert(lines[1], { " ▸" .. row.folded, "FloatTermWorking" })
   end
@@ -284,29 +274,20 @@ local function number_chunk(record)
 end
 
 local function render_vertical(rows, current, height, width)
-  local level, all
-  local roots = 0
+  local all, count = {}, 0
   for _, row in ipairs(rows) do
-    roots = roots + (row.depth == 0 and 1 or 0)
-  end
-  for try = 0, 2 do
-    level, all = try, {}
-    for _, row in ipairs(rows) do
-      table.insert(all, vertical_tab(row.record, level, row))
-    end
+    local lines = vertical_tab(row.record, row)
+    table.insert(all, lines)
     -- Blank lines go between the trees, not inside one.
-    local count = (level == 0) and (roots - 1) or 0
-    for _, lines in ipairs(all) do
-      count = count + #lines
-    end
-    if count <= height then
-      break
-    end
+    count = count + #lines + ((#all > 1 and row.depth == 0) and 1 or 0)
   end
+  -- Without room for the blank lines, they go; past that the bar scrolls (M.redraw
+  -- keeps the tab you're in on screen).
+  local gaps = count <= height
 
   local out, spans = {}, {}
   for i, lines in ipairs(all) do
-    if level == 0 and i > 1 and rows[i].depth == 0 then
+    if gaps and i > 1 and rows[i].depth == 0 then
       table.insert(out, {})
     end
     local first = #out
@@ -599,7 +580,12 @@ function M.redraw()
       local top = vim.fn.line "w0"
       local bottom = vim.fn.line "w$"
       if entries[current].first + 1 < top or entries[current].last + 1 > bottom then
-        vim.fn.winrestview { topline = math.max(1, entries[current].last + 2 - config.height) }
+        -- The cursor moves with it, or nvim scrolls back to keep the cursor in view.
+        vim.fn.winrestview {
+          topline = math.max(1, entries[current].last + 2 - config.height),
+          lnum = entries[current].first + 1,
+          col = 0,
+        }
       end
     end)
   end

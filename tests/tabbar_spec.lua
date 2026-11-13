@@ -242,7 +242,7 @@ describe("tab bar", function()
       assert.truthy(lines[1]:find "…$")
     end)
 
-    it("drops blank lines first, then the second line, when the tabs don't fit", function()
+    it("drops blank lines when the tabs don't fit, then scrolls to the tab you're in", function()
       for i = 1, 14 do
         claude_tab { label = "tab" .. i, status = "done", title = "✳ task " .. i }
       end
@@ -256,13 +256,16 @@ describe("tab bar", function()
       for i = 15, 21 do
         claude_tab { label = "tab" .. i, status = "done", title = "✳ task " .. i }
       end
-      -- 21 tabs of 2 lines would be 42: one line each, the state glyph kept.
+      -- 21 tabs of 2 lines is 42: every tab keeps both lines and the bar scrolls,
+      -- keeping the tab you're in (the last) on screen.
       lines = draw()
-      assert.equals(21, #lines)
-      assert.equals("  ✳ ✓ task 1", lines[1])
-      for _, line in ipairs(lines) do
-        assert.is_nil(line:find("· tab", 1, true))
-      end
+      assert.equals(42, #lines)
+      assert.truthy(lines[42]:match "^▎ ✓ done · %d+s · tab21$", lines[42])
+      local view = api.nvim_win_call(tabbar.window(), function()
+        return { top = vim.fn.line "w0", bottom = vim.fn.line "w$" }
+      end)
+      assert.equals(42, view.bottom)
+      assert.is_true(view.top > 1)
     end)
 
     it("closes when the float hides and is off with the setting", function()
