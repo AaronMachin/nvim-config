@@ -21,6 +21,16 @@ local function find_line(lines, text)
   end
 end
 
+-- Down the left, a tab's first line is what it runs and its second ends with its name:
+-- the first line of the tab named `name`, or nil.
+local function first_line_of(lines, name)
+  for i, line in ipairs(lines) do
+    if line:find(" · " .. name .. "$") then
+      return lines[i - 1]
+    end
+  end
+end
+
 local function names()
   return vim.tbl_map(function(record)
     return ft.name(record)
@@ -71,13 +81,13 @@ describe("tab groups", function()
       end)
       keys "g"
       -- The bar numbered the other tabs, not this one.
-      assert.truthy(find_line(shown.lines, "1 $ lead"), table.concat(shown.lines, "\n"))
-      assert.truthy(find_line(shown.lines, "2 $ other"))
+      assert.truthy(first_line_of(shown.lines, "lead"):find "^[^%d]*1 ", table.concat(shown.lines, "\n"))
+      assert.truthy(first_line_of(shown.lines, "other"):find "^[^%d]*2 ")
       assert.is_nil(find_line(shown.lines, "3 "))
       assert.equals("Put child under tab number (0 for none): ", shown.prompt)
       assert.equals(ft.record(lead).uid, ft.record(child).parent_uid)
       -- The numbers go once it's answered.
-      assert.is_nil(find_line(draw(), "1 $ lead"))
+      assert.is_nil(first_line_of(draw(), "lead"):find "^[^%d]*1 ")
       -- Right after its parent now.
       assert.same({ "lead", "child", "other" }, names())
       H.answer_input "0"
@@ -149,16 +159,16 @@ describe("tab groups", function()
 
     it("draws children under their parent down the left, with the tree", function()
       local lines = draw()
-      local at = find_line(lines, "$ lead")
-      assert.equals("  $ lead", lines[at])
-      assert.truthy(lines[at + 1]:find "^  %S") -- its command, not part of the tree
-      assert.equals("  ├ $ a", lines[at + 2])
-      assert.truthy(lines[at + 3]:find "^  │ ")
-      assert.equals("▶ └ $ b", lines[at + 4])
-      assert.truthy(lines[at + 5]:find "^▎   %S")
+      local at = find_line(lines, " · lead")
+      assert.truthy(lines[at - 1]:find "^  %S") -- its command, not part of the tree
+      assert.truthy(lines[at]:find "^  %a+ · lead$", lines[at])
+      assert.truthy(lines[at + 1]:find "^  ├ %S", lines[at + 1])
+      assert.truthy(lines[at + 2]:find "^  │ %a+ · a$", lines[at + 2])
+      assert.truthy(lines[at + 3]:find "^▶ └ %S", lines[at + 3])
+      assert.truthy(lines[at + 4]:find "^▎   %a+ · b$", lines[at + 4])
       -- A blank line between trees, not inside one.
-      assert.equals("", lines[at + 6])
-      assert.equals("  $ solo", lines[at + 7])
+      assert.equals("", lines[at + 5])
+      assert.truthy(lines[at + 7]:find "^  %a+ · solo$", lines[at + 7])
     end)
 
     it("puts children right after their parent along the top, marked", function()
@@ -179,18 +189,18 @@ describe("tab groups", function()
       keys "za"
       assert.is_true(ft.record(lead).children_folded)
       local lines = draw()
-      assert.is_nil(find_line(lines, "$ a"))
-      assert.is_nil(find_line(lines, "$ b"))
+      assert.is_nil(find_line(lines, " · a"))
+      assert.is_nil(find_line(lines, " · b"))
       -- The current tab (b) is folded away, so its parent's row is marked.
-      local _, line = find_line(lines, "$ lead")
-      assert.truthy(line:find "^▶ %$ lead ▸2", line)
+      local line = first_line_of(lines, "lead")
+      assert.truthy(line:find "^▶ .* ▸2$", line)
       settings.set("tabbar", "top")
       assert.truthy(draw()[1]:find("$ lead ▸2", 1, true))
       settings.set("tabbar", "left")
       tabbar.enter()
       keys "za"
       assert.is_nil(ft.record(lead).children_folded)
-      assert.is_not_nil(find_line(draw(), "$ a"))
+      assert.is_not_nil(find_line(draw(), " · a"))
     end)
 
     it("next and previous step over folded children", function()
@@ -239,7 +249,8 @@ describe("tab groups", function()
       assert.same({ "epic", "x", "y" }, names())
       local lines = draw()
       assert.equals("  ▾ epic", lines[1])
-      assert.equals("  ├ $ x", lines[2])
+      assert.truthy(lines[2]:find "^. ├ %S", lines[2])
+      assert.truthy(lines[3]:find "│ %a+ · x$", lines[3])
       assert.is_true(ft.focus_buf(heading))
       assert.equals(x, ft.current_buf())
       ft.previous_tab()

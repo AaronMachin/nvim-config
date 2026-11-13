@@ -185,15 +185,23 @@ describe("tab bar", function()
   end)
 
   describe("down the left", function()
-    it("shows state, summary and folder for Claude, folder for a shell, and marks the current tab", function()
+    it("shows what a tab is first, then its state and folder underneath", function()
       H.sleep_tab { label = "shell" }
       claude_tab { label = "api", status = "needs_you", title = "✳ Fixing login", notes_on = true }
       local lines = draw()
-      assert.equals("  $ shell", lines[1])
+      assert.truthy(lines[1]:find "^  %S", lines[1]) -- the shell's command
+      assert.truthy(lines[2]:match "^  idle · shell$" or lines[2]:match "^  running · shell$", lines[2])
       assert.equals("", lines[3]) -- a blank line between tabs
-      assert.truthy(lines[4]:match "^▶ ● needs you · %d+s ✎$", lines[4])
-      assert.equals("▎ Fixing login", lines[5])
-      assert.equals("▎ ✳ api", lines[6])
+      assert.equals("▶ Fixing login", lines[4])
+      assert.truthy(lines[5]:match "^▎ ● needs you · %d+s ✎ · api$", lines[5])
+      assert.equals(5, #lines)
+    end)
+
+    it("shows a Claude tab's folder until it has a summary", function()
+      claude_tab { label = "api" }
+      local lines = draw()
+      assert.equals("▶ api", lines[1])
+      assert.equals("▎ ✳ new · api", lines[2])
     end)
 
     it("gives every line of the current tab a full-width background and an edge", function()
@@ -230,29 +238,31 @@ describe("tab bar", function()
       claude_tab { label = "api", status = "working", title = "✳ " .. string.rep("long words ", 6) }
       local lines = draw()
       local width = 20 - 2 -- inside the border
-      assert.equals(width, vim.fn.strdisplaywidth(lines[2]))
-      assert.truthy(lines[2]:find "…$")
+      assert.equals(width, vim.fn.strdisplaywidth(lines[1]))
+      assert.truthy(lines[1]:find "…$")
     end)
 
-    it("drops blank lines first, then Claude folders, when the tabs don't fit", function()
-      for i = 1, 12 do
+    it("drops blank lines first, then the second line, when the tabs don't fit", function()
+      for i = 1, 14 do
         claude_tab { label = "tab" .. i, status = "done", title = "✳ task " .. i }
       end
-      -- 12 tabs of 3 lines with gaps would be 47 lines; the bar has 40.
+      -- 14 tabs of 2 lines with gaps would be 41 lines; the bar has 40.
       local lines = draw()
-      assert.equals(36, #lines)
+      assert.equals(28, #lines)
       assert.is_false(vim.tbl_contains(lines, ""))
-      assert.equals("  ✳ tab1", lines[3])
+      assert.equals("  task 1", lines[1])
+      assert.truthy(lines[2]:match "^  ✓ done · %d+s · tab1$", lines[2])
 
-      for i = 13, 14 do
+      for i = 15, 21 do
         claude_tab { label = "tab" .. i, status = "done", title = "✳ task " .. i }
       end
+      -- 21 tabs of 2 lines would be 42: one line each, the state glyph kept.
       lines = draw()
-      assert.equals(28, #lines)
+      assert.equals(21, #lines)
+      assert.equals("  ✓ task 1", lines[1])
       for _, line in ipairs(lines) do
-        assert.is_nil(line:find("✳ tab", 1, true))
+        assert.is_nil(line:find("· tab", 1, true))
       end
-      assert.equals("  task 1", lines[2])
     end)
 
     it("closes when the float hides and is off with the setting", function()

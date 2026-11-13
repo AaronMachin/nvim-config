@@ -9,9 +9,11 @@
 -- ├ and └, along the top right after it with └. A parent with its children folded
 -- away (za) shows how many with ▸. A group heading is one line, ▾ and its name.
 --
--- A Claude tab shows its state first, then what it's working on, then its folder;
--- when space runs out the folder goes first, then the summary, never the state. A
--- shell tab shows its folder and what's running in it.
+-- Down the left, a Claude tab shows what it's working on, then its state and folder
+-- underneath; a shell tab shows what's running in it, then running or idle and its
+-- folder. When space runs out the folder goes first, then the second line, never the
+-- state. Along the top, a Claude tab shows its state first, then what it's working
+-- on, then its folder, and a shell tab its folder and what's running.
 --
 -- While tabs exist, a timer (once a second) copies each tab's terminal title into its
 -- record. While the bar is drawn or a Claude tab exists, it also works out each shell
@@ -196,38 +198,49 @@ local function truncate(chunks, width)
   return out
 end
 
--- Down the left side: a few lines per tab. Levels drop, in turn, the blank line
--- between tabs, a Claude tab's folder, then its summary and a shell's command.
+-- Down the left side: two lines per tab. The first says what the tab is (a Claude
+-- tab's summary, a shell's command); the second its state, then its folder (or the
+-- name it was given with r), which is cut first when the bar is narrow. Levels drop,
+-- in turn, the blank line between tabs, then the second line, when the state glyph
+-- moves up to the first.
 local function vertical_tab(record, level, row)
-  local lines = {}
   if record.kind == "group" then
     local name = require("floatterm").name(record)
-    lines = { { { (row.folded and "▸ " or "▾ ") .. name, "FloatTermGroup" } } }
-  elseif record.kind == "claude" then
-    local text, hl = state_text(record)
-    table.insert(lines, { { text, hl } })
-    local summary = M.summary(record)
-    if level < 3 and summary then
-      table.insert(lines, { { summary, nil } })
+    local line = { { (row.folded and "▸ " or "▾ ") .. name, "FloatTermGroup" } }
+    if row.folded then
+      table.insert(line, { " · " .. row.folded, "FloatTermWorking" })
     end
+    return { line }
+  end
+
+  local first, second
+  local name = require("floatterm").name(record)
+  if record.kind == "claude" then
+    local state = M.state(record)
+    first = { { M.summary(record) or name, nil } }
     if level < 2 then
-      table.insert(lines, { { "✳ " .. require("floatterm").name(record), "FloatTermWorking" } })
+      local text, hl = state_text(record)
+      second = { { text, hl } }
+    else
+      table.insert(first, 1, { state.glyph .. " ", state.hl })
     end
   else
-    table.insert(lines, { { "$ " .. require("floatterm").name(record), nil } })
-    if level < 3 then
-      local command, hl = shell_command(record)
-      table.insert(lines, { { command, hl } })
+    local command, hl = shell_command(record)
+    first = { { command, hl } }
+    if level < 2 then
+      second = { { M.is_running(record) and "running" or "idle", "FloatTermWorking" } }
     end
   end
-  -- Notes on (lua/floatterm/notes), after the state or folder.
+  local lines = { first, second }
+  -- Notes on (lua/floatterm/notes), after the state, or at the end of a lone line.
   if record.notes_on then
-    table.insert(lines[1], { " ✎", nil })
+    table.insert(lines[#lines], { " ✎", nil })
   end
-  if row.folded and record.kind ~= "group" then
+  if second then
+    table.insert(second, { " · " .. name, "FloatTermWorking" })
+  end
+  if row.folded then
     table.insert(lines[1], { " ▸" .. row.folded, "FloatTermWorking" })
-  elseif row.folded then
-    table.insert(lines[1], { " · " .. row.folded, "FloatTermWorking" })
   end
   return lines
 end
@@ -264,7 +277,7 @@ local function render_vertical(rows, current, height, width)
   for _, row in ipairs(rows) do
     roots = roots + (row.depth == 0 and 1 or 0)
   end
-  for try = 0, 3 do
+  for try = 0, 2 do
     level, all = try, {}
     for _, row in ipairs(rows) do
       table.insert(all, vertical_tab(row.record, level, row))
