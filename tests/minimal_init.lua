@@ -42,6 +42,11 @@ vim.g.nvim_test_proc = proc
 -- folder it was started in.
 vim.g.floatterm_placement_dir = vim.g.floatterm_placement_dir or (proc .. "/placement")
 vim.g.floatterm_tabs_dir = vim.g.floatterm_tabs_dir or (proc .. "/tabs")
+-- Haiku picking Claude tabs' emoji would run claude; tests/emoji_spec.lua turns it on
+-- with a fake one.
+if vim.g.floatterm_emoji_picker == nil then
+  vim.g.floatterm_emoji_picker = false
+end
 if not vim.env.NVIM_TEST_CHILD then
   local start = proc .. "/start"
   vim.fn.mkdir(start, "p")

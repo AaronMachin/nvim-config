@@ -113,9 +113,9 @@ local function state_text(record)
   return text, state.hl
 end
 
--- What a Claude tab is working on: the title Claude set, without its spinner, else
--- the first line of the last prompt.
-function M.summary(record)
+-- The title Claude set for what a tab is working on, without its spinner, or nil
+-- before Claude has set one.
+function M.title_summary(record)
   local title = record.title
   if type(title) == "string" and not title:match "^term://" and title ~= record.shell_title then
     title = vim.trim((title:gsub("^[^%w%(%[\"']+", "")))
@@ -123,6 +123,16 @@ function M.summary(record)
     if title ~= "" and title ~= "Claude Code" then
       return title
     end
+  end
+  return nil
+end
+
+-- What a Claude tab is working on: the title Claude set, else the first line of the
+-- last prompt.
+function M.summary(record)
+  local title = M.title_summary(record)
+  if title then
+    return title
   end
   if type(record.last_prompt) == "string" and record.last_prompt ~= "" then
     return vim.trim(vim.split(record.last_prompt, "\n")[1])
