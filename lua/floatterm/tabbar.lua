@@ -65,7 +65,17 @@ local function set_highlights()
   api.nvim_set_hl(0, "FloatTermNeedsYou", { fg = warn.fg, bold = true })
   api.nvim_set_hl(0, "FloatTermWorking", { link = "Comment", default = true })
   api.nvim_set_hl(0, "FloatTermDone", { link = "LineNr", default = true })
-  api.nvim_set_hl(0, "FloatTermCurrent", { bold = true, default = true })
+  -- The tab you're in: the colour scheme's cursor line behind every line of it, so it
+  -- stands out across the bar's width, with its ▶ and edge in the info colour.
+  local function colour(name, key)
+    return api.nvim_get_hl(0, { name = name, link = false })[key]
+  end
+  api.nvim_set_hl(0, "FloatTermCurrent", {
+    bg = colour("CursorLine", "bg") or colour("Visual", "bg"),
+    bold = true,
+    default = true,
+  })
+  api.nvim_set_hl(0, "FloatTermCurrentEdge", { fg = colour("DiagnosticInfo", "fg"), bold = true, default = true })
   api.nvim_set_hl(0, "FloatTermSelected", { link = "Visual", default = true })
   api.nvim_set_hl(0, "FloatTermGroup", { link = "Title", default = true })
   api.nvim_set_hl(0, "FloatTermTree", { link = "FloatBorder", default = true })
@@ -277,8 +287,9 @@ local function render_vertical(rows, current, height, width)
     local first = #out
     local head, rest = tree_prefix(rows[i])
     for n, line in ipairs(lines) do
-      local marker = (n == 1 and i == current) and "▶ " or "  "
-      local chunks = { { marker, nil } }
+      -- The tab you're in has ▶ on its first line and an edge down the rest.
+      local marker = i ~= current and "  " or (n == 1 and "▶ " or "▎ ")
+      local chunks = { { marker, i == current and "FloatTermCurrentEdge" or nil } }
       if numbers then
         local number = n == 1 and number_chunk(rows[i].record) or { string.rep(" ", #number_chunk(rows[i].record)[1]) }
         table.insert(chunks, number)

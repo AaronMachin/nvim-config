@@ -192,8 +192,37 @@ describe("tab bar", function()
       assert.equals("  $ shell", lines[1])
       assert.equals("", lines[3]) -- a blank line between tabs
       assert.truthy(lines[4]:match "^▶ ● needs you · %d+s ✎$", lines[4])
-      assert.equals("  Fixing login", lines[5])
-      assert.equals("  ✳ api", lines[6])
+      assert.equals("▎ Fixing login", lines[5])
+      assert.equals("▎ ✳ api", lines[6])
+    end)
+
+    it("gives every line of the current tab a full-width background and an edge", function()
+      H.sleep_tab { label = "shell" }
+      claude_tab { label = "api", status = "working", title = "✳ Fixing login" }
+      local lines = draw()
+      local buf = api.nvim_win_get_buf(tabbar.window())
+      local ns = api.nvim_get_namespaces().floatterm_tabbar
+      local marked = {}
+      for _, mark in ipairs(api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+        local details = mark[4]
+        if details.hl_group == "FloatTermCurrent" then
+          assert.is_true(details.hl_eol)
+          for line = mark[2], details.end_row - 1 do
+            marked[line + 1] = true
+          end
+        end
+      end
+      -- The shell (lines 1-2) and the gap (3) aren't marked; the Claude tab's lines are.
+      assert.is_nil(marked[1])
+      assert.is_nil(marked[3])
+      for n = 4, #lines do
+        assert.is_true(marked[n], "line " .. n)
+      end
+      assert.truthy(lines[4]:find "^▶ ")
+      for n = 5, #lines do
+        assert.truthy(lines[n]:find "^▎ ", lines[n])
+      end
+      assert.is_not_nil(api.nvim_get_hl(0, { name = "FloatTermCurrent" }).bg)
     end)
 
     it("cuts a long summary to the bar's width with …", function()

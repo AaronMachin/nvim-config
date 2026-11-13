@@ -155,7 +155,7 @@ describe("tab groups", function()
       assert.equals("  ├ $ a", lines[at + 2])
       assert.truthy(lines[at + 3]:find "^  │ ")
       assert.equals("▶ └ $ b", lines[at + 4])
-      assert.truthy(lines[at + 5]:find "^    %S")
+      assert.truthy(lines[at + 5]:find "^▎   %S")
       -- A blank line between trees, not inside one.
       assert.equals("", lines[at + 6])
       assert.equals("  $ solo", lines[at + 7])
