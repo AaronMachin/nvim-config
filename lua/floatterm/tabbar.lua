@@ -231,6 +231,8 @@ local function vertical_tab(record, level, row)
       second = { { M.is_running(record) and "running" or "idle", "FloatTermWorking" } }
     end
   end
+  -- Its emoji (lua/floatterm/emoji) leads the first line.
+  table.insert(first, 1, { require("floatterm.emoji").glyph(record) .. " ", nil })
   local lines = { first, second }
   -- Notes on (lua/floatterm/notes), after the state, or at the end of a lone line.
   if record.notes_on then
@@ -497,6 +499,7 @@ function M.redraw()
     return
   end
 
+  require("floatterm.emoji").ensure_all()
   local groups = require "floatterm.groups"
   rows_drawn = groups.rows()
   -- A tab folded away marks its parent's row.
@@ -1302,6 +1305,7 @@ function M.setup()
   end
   set_up = true
   require("floatterm.groups").setup()
+  require("floatterm.emoji").setup()
 
   local group = api.nvim_create_augroup("floatterm_tabbar", { clear = true })
   local keys_added = false

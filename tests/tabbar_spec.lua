@@ -192,7 +192,7 @@ describe("tab bar", function()
       assert.truthy(lines[1]:find "^  %S", lines[1]) -- the shell's command
       assert.truthy(lines[2]:match "^  idle · shell$" or lines[2]:match "^  running · shell$", lines[2])
       assert.equals("", lines[3]) -- a blank line between tabs
-      assert.equals("▶ Fixing login", lines[4])
+      assert.equals("▶ ✳ Fixing login", lines[4])
       assert.truthy(lines[5]:match "^▎ ● needs you · %d+s ✎ · api$", lines[5])
       assert.equals(5, #lines)
     end)
@@ -200,7 +200,7 @@ describe("tab bar", function()
     it("shows a Claude tab's folder until it has a summary", function()
       claude_tab { label = "api" }
       local lines = draw()
-      assert.equals("▶ api", lines[1])
+      assert.equals("▶ ✳ api", lines[1])
       assert.equals("▎ ✳ new · api", lines[2])
     end)
 
@@ -250,7 +250,7 @@ describe("tab bar", function()
       local lines = draw()
       assert.equals(28, #lines)
       assert.is_false(vim.tbl_contains(lines, ""))
-      assert.equals("  task 1", lines[1])
+      assert.equals("  ✳ task 1", lines[1])
       assert.truthy(lines[2]:match "^  ✓ done · %d+s · tab1$", lines[2])
 
       for i = 15, 21 do
@@ -259,7 +259,7 @@ describe("tab bar", function()
       -- 21 tabs of 2 lines would be 42: one line each, the state glyph kept.
       lines = draw()
       assert.equals(21, #lines)
-      assert.equals("  ✓ task 1", lines[1])
+      assert.equals("  ✳ ✓ task 1", lines[1])
       for _, line in ipairs(lines) do
         assert.is_nil(line:find("· tab", 1, true))
       end

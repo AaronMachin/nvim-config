@@ -410,6 +410,9 @@ local function snapshot()
       label = record.label,
       note_id = record.note_id,
       notes_on = record.notes_on,
+      -- Its emoji in the tab bar (lua/floatterm/emoji).
+      emoji = record.emoji,
+      emoji_for = record.emoji_for,
       -- Where it sits among the tabs (lua/floatterm/groups).
       uid = record.uid,
       parent_uid = record.parent_uid,
@@ -605,6 +608,8 @@ local function placed(tab)
     children_folded = tab.children_folded or vim.NIL,
     workstream_slug = tab.workstream_slug or vim.NIL,
     workstream_asked = tab.workstream_asked or vim.NIL,
+    emoji = tab.emoji or vim.NIL,
+    emoji_for = tab.emoji_for or vim.NIL,
   }
 end
 
@@ -666,6 +671,8 @@ local function reopen(tab, report)
     children_folded = tab.children_folded or vim.NIL,
     workstream_slug = tab.workstream_slug or vim.NIL,
     workstream_asked = tab.workstream_asked or vim.NIL,
+    emoji = tab.emoji or vim.NIL,
+    emoji_for = tab.emoji_for or vim.NIL,
     note_id = tab.note_id or vim.NIL,
     notes_on = tab.notes_on or vim.NIL,
     title = tab.title or vim.NIL,
