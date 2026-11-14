@@ -494,37 +494,26 @@ describe("floatterm", function()
   end)
 
   describe("clicking in a terminal tab", function()
-    -- Headless there's no screen to click on or terminal mode to leave, so the mode is
-    -- stubbed: `from` when the button goes down, and "nt" (out of typing, as a click
-    -- leaves it) when it comes up. Returns whether it went back to typing.
-    local function click(from)
-      local mode = from
-      H.stub(api, "nvim_get_mode", function()
-        return { mode = mode, blocking = false }
-      end)
-      local commands = {}
-      local cmd = vim.cmd
-      H.stub(vim, "cmd", function(command)
-        table.insert(commands, command)
-      end)
-      api.nvim_feedkeys(api.nvim_replace_termcodes("<LeftMouse>", true, false, true), "x", false)
-      mode = "nt"
-      api.nvim_feedkeys(api.nvim_replace_termcodes("<LeftRelease>", true, false, true), "x", false)
-      H.flush(50)
-      vim.cmd = cmd
-      return vim.tbl_contains(commands, "startinsert")
-    end
-
-    it("goes back to typing when you were typing", function()
-      ft.focus_buf(H.sleep_tab(), { typing = false })
-      H.flush(50)
-      assert.is_true(click "t")
+    -- Headless there's no screen to click on, so this tests the rule; a real click
+    -- (press handed on twice, then the release) was checked in a terminal.
+    it("goes back to typing when a click took it out of typing", function()
+      local buf = H.sleep_tab()
+      local win = api.nvim_get_current_win()
+      assert.is_true(ft.click_returns_to_typing(buf, "t", true, win, win))
     end)
 
-    it("stays out of typing after Ctrl+x, so a click only moves the cursor", function()
-      ft.focus_buf(H.sleep_tab(), { typing = false })
-      H.flush(50)
-      assert.is_false(click "nt")
+    it("starts typing when clicked into from another window", function()
+      local buf = H.sleep_tab()
+      local win = api.nvim_get_current_win()
+      assert.is_true(ft.click_returns_to_typing(buf, "n", true, win + 1000, win))
+    end)
+
+    it("stays out of typing for a click after Ctrl+x, Ctrl+x itself, and other buffers", function()
+      local buf = H.sleep_tab()
+      local win = api.nvim_get_current_win()
+      assert.is_false(ft.click_returns_to_typing(buf, "v", true, win, win))
+      assert.is_false(ft.click_returns_to_typing(buf, "t", false, win, win))
+      assert.is_false(ft.click_returns_to_typing(api.nvim_create_buf(false, true), "t", true, win, win))
     end)
   end)
 

@@ -92,7 +92,7 @@ describe("tab bar", function()
       settings.set("tabbar", "left")
     end)
 
-    it("opens it in normal mode when you weren't typing, so a click never starts typing", function()
+    it("opens it out of typing after Ctrl+x, so a click never starts typing then", function()
       local first = H.sleep_tab { label = "first" }
       H.sleep_tab { label = "second" }
       vim.cmd "stopinsert"
@@ -101,6 +101,25 @@ describe("tab bar", function()
       assert.equals(first, ft.current_buf())
       assert.equals(first, vim.api.nvim_get_current_buf())
       assert.is_false(vim.tbl_contains(commands, "startinsert"))
+    end)
+
+    it("opens it typing when clicked from the code, and drops the click's release", function()
+      local first = H.sleep_tab { label = "first" }
+      H.sleep_tab { label = "second" }
+      vim.cmd "stopinsert"
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_config(win).relative == "" then
+          vim.api.nvim_set_current_win(win)
+        end
+      end
+      H.flush(50)
+      local commands = click_tab "first"
+      assert.equals(first, ft.current_buf())
+      assert.truthy(vim.tbl_contains(commands, "startinsert"))
+      local release = vim.fn.maparg("<LeftRelease>", "n", false, true)
+      assert.equals("", release.callback())
+      -- Only the one release after a click on the bar.
+      assert.equals(vim.keycode "<LeftRelease>", vim.keycode(release.callback()))
     end)
   end)
 

@@ -1060,6 +1060,17 @@ local function covered(pos, row, cell)
   return false
 end
 
+-- Set when the bar handled a click's press, so on_release drops its release.
+local swallow_release = false
+
+local function on_release()
+  if swallow_release then
+    swallow_release = false
+    return ""
+  end
+  return "<LeftRelease>"
+end
+
 -- A click on a tab in the bar opens it. The bar can't be focused, so the click is
 -- matched to the bar by where it landed on screen, and only counts when the bar is on
 -- this tab page and nothing is drawn over it there; anywhere else the click (and any
@@ -1099,9 +1110,12 @@ local function on_click()
   if not record then
     return ""
   end
-  -- Typing carries on if you were typing in the terminal; otherwise (Ctrl+x, or from
-  -- the code) the tab opens in normal mode, and i starts typing.
-  local typing = api.nvim_get_mode().mode == "t"
+  -- The press is handled here, so its release mustn't reach the window either: in a
+  -- terminal it would leave typing, and anywhere it would end a drag (visual mode).
+  swallow_release = true
+  -- The tab opens typing, unless you'd left typing in a terminal tab with Ctrl+x, when
+  -- it opens in that mode too (i starts typing).
+  local typing = not (api.nvim_get_mode().mode == "nt" and floatterm.record(api.nvim_get_current_buf()))
   vim.schedule(function()
     floatterm.focus_buf(record.buf, { typing = typing })
   end)
@@ -1335,6 +1349,12 @@ function M.setup()
     "<LeftMouse>",
     on_click,
     { expr = true, desc = "terminal open the tab clicked in the tab bar" }
+  )
+  vim.keymap.set(
+    { "n", "i", "t", "x" },
+    "<LeftRelease>",
+    on_release,
+    { expr = true, desc = "terminal drop the release of a tab bar click" }
   )
 end
 

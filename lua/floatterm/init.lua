@@ -1400,30 +1400,63 @@ api.nvim_create_autocmd("User", {
   end,
 })
 
--- A click in a terminal tab doesn't leave typing: only Ctrl+x does. Neovim drops out of
--- terminal mode on a click (unless the program in it reads the mouse), so once the
--- click is over the tab goes back to typing, when you were typing there or clicked in
--- from another window. A click while already out of typing still moves the cursor, and
--- a drag still selects (it ends in visual mode, which is left alone).
-local LEFT_MOUSE, LEFT_RELEASE = vim.keycode "<LeftMouse>", vim.keycode "<LeftRelease>"
-local before_click = nil
-vim.on_key(function(key)
-  if key == LEFT_MOUSE then
-    before_click = { mode = api.nvim_get_mode().mode, win = api.nvim_get_current_win() }
-  elseif key == LEFT_RELEASE and before_click then
-    local before = before_click
-    before_click = nil
+-- Only Ctrl+x leaves typing in a terminal tab. Neovim also leaves it on a click (the
+-- press, and the release after a click on the tab bar) unless the program in the tab
+-- reads the mouse, as Claude does. So when a click takes a tab out of typing, it goes
+-- straight back, and a click into a tab from another window starts typing. The scroll wheel is left alone, so it still scrolls back through a
+-- shell's output. To select with the mouse, Ctrl+x first, then drag.
+local CLICKS = {}
+for _, name in ipairs {
+  "LeftMouse",
+  "LeftRelease",
+  "LeftDrag",
+  "RightMouse",
+  "RightRelease",
+  "RightDrag",
+  "MiddleMouse",
+  "MiddleRelease",
+  "MiddleDrag",
+  "2-LeftMouse",
+  "3-LeftMouse",
+} do
+  CLICKS[vim.keycode("<" .. name .. ">")] = true
+end
+local last_was_click = false
+-- The window a click was pressed in (its first delivery: Neovim hands a press in a
+-- terminal on again once it has left typing).
+local pressed_in = nil
+local LEFT_MOUSE = vim.keycode "<LeftMouse>"
+vim.on_key(function(key, typed)
+  last_was_click = CLICKS[key] == true
+  if key == LEFT_MOUSE and typed and typed ~= "" then
+    pressed_in = api.nvim_get_current_win()
+  end
+end, api.nvim_create_namespace "floatterm_click_keeps_typing")
+-- Whether a move into Ctrl+x mode in `buf` (from `old_mode`) should go back to typing:
+-- when a click did it, in a terminal tab, and either it was typing or the click came
+-- from another window (the code, the notes). A click after Ctrl+x stays put.
+function M.click_returns_to_typing(buf, old_mode, was_click, from_win, win)
+  if not (was_click and M.record(buf)) then
+    return false
+  end
+  return old_mode == "t" or from_win ~= win
+end
+
+api.nvim_create_autocmd("ModeChanged", {
+  pattern = "*:nt",
+  callback = function(args)
+    local win = api.nvim_get_current_win()
+    if not M.click_returns_to_typing(args.buf, vim.v.event.old_mode, last_was_click, pressed_in, win) then
+      return
+    end
     vim.schedule(function()
-      local win = api.nvim_get_current_win()
-      if api.nvim_get_mode().mode ~= "nt" or not M.record(api.nvim_win_get_buf(win)) then
-        return
-      end
-      if before.mode == "t" or before.win ~= win then
+      local buf = api.nvim_get_current_buf()
+      if api.nvim_get_mode().mode == "nt" and M.record(buf) then
         vim.cmd "startinsert"
       end
     end)
-  end
-end, api.nvim_create_namespace "floatterm_click_keeps_typing")
+  end,
+})
 
 api.nvim_create_autocmd("TermClose", {
   callback = function(args)
