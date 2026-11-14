@@ -1400,6 +1400,31 @@ api.nvim_create_autocmd("User", {
   end,
 })
 
+-- A click in a terminal tab doesn't leave typing: only Ctrl+x does. Neovim drops out of
+-- terminal mode on a click (unless the program in it reads the mouse), so once the
+-- click is over the tab goes back to typing, when you were typing there or clicked in
+-- from another window. A click while already out of typing still moves the cursor, and
+-- a drag still selects (it ends in visual mode, which is left alone).
+local LEFT_MOUSE, LEFT_RELEASE = vim.keycode "<LeftMouse>", vim.keycode "<LeftRelease>"
+local before_click = nil
+vim.on_key(function(key)
+  if key == LEFT_MOUSE then
+    before_click = { mode = api.nvim_get_mode().mode, win = api.nvim_get_current_win() }
+  elseif key == LEFT_RELEASE and before_click then
+    local before = before_click
+    before_click = nil
+    vim.schedule(function()
+      local win = api.nvim_get_current_win()
+      if api.nvim_get_mode().mode ~= "nt" or not M.record(api.nvim_win_get_buf(win)) then
+        return
+      end
+      if before.mode == "t" or before.win ~= win then
+        vim.cmd "startinsert"
+      end
+    end)
+  end
+end, api.nvim_create_namespace "floatterm_click_keeps_typing")
+
 api.nvim_create_autocmd("TermClose", {
   callback = function(args)
     if not index_of(args.buf) then
