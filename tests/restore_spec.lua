@@ -43,7 +43,7 @@ local function restore_in(project, dir, before, opts)
       table.insert(out.tabs, {
         kind = t.kind, label = t.label, cwd = t.cwd, last_command = t.last_command,
         session_id = t.session_id, title = t.title, status = t.status,
-        note_id = t.note_id, notes_on = t.notes_on, emoji = t.emoji, emoji_for = t.emoji_for,
+        note_id = t.note_id, notes_on = t.notes_on, emoji = t.emoji,
       })
     end
     io.stdout:write(vim.json.encode(out))
@@ -83,7 +83,6 @@ describe("restore", function()
           note_id = "20261001-nnnn",
           notes_on = true,
           emoji = "🦊",
-          emoji_for = "shell",
         },
         {
           kind = "claude",
@@ -95,7 +94,6 @@ describe("restore", function()
           status = "done",
           last_prompt = "fix it",
           emoji = "🔐",
-          emoji_for = "claude",
         },
       },
     })
@@ -108,7 +106,6 @@ describe("restore", function()
     assert.is_true(shell.notes_on)
     assert.equals("🦊", shell.emoji)
     assert.equals("🔐", claude.emoji)
-    assert.equals("claude", claude.emoji_for)
     assert.equals("claude", claude.kind)
     assert.equals("s1", claude.session_id)
     assert.equals("✳ Fixing login", claude.title)
@@ -372,7 +369,7 @@ describe("restore", function()
         local ft = require "floatterm"
         ft.new_tab({ "sleep", "300" }, { label = "server" })
         local _, buf = ft.new_tab({ "sleep", "300" }, { label = "api", kind = "claude" })
-        ft.update(buf, { session_id = "s9", status = "working", title = "✳ Doing it", note_id = "n1", notes_on = true, emoji = "🧩", emoji_for = "claude" })
+        ft.update(buf, { session_id = "s9", status = "working", title = "✳ Doing it", note_id = "n1", notes_on = true, emoji = "🧩" })
         -- Saved a second or two after the change, without being asked.
         local path = r.state().dir .. "/" .. (r.state().current or "") .. ".json"
         vim.wait(4000, function()
@@ -397,7 +394,6 @@ describe("restore", function()
       assert.equals("n1", claude.note_id)
       assert.is_true(claude.notes_on)
       assert.equals("🧩", claude.emoji)
-      assert.equals("claude", claude.emoji_for)
       -- Its lock went with it on quit.
       assert.is_false(H.exists(dir .. "/" .. folder_key(project) .. "/" .. out .. ".lock"))
     end)
