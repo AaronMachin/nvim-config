@@ -28,12 +28,12 @@ Restore and the remembered placement need a fresh nvim per case, so those specs 
 | --- | --- |
 | `floatterm_spec.lua` | settings, tab records and events, placements (docked, box, full, split), moves, tab bar and notes room, previous/next/move tab, force-close, unwrapped copy |
 | `groups_spec.lua` | tabs under a parent: `g` and loops refused, the tree in both bar layouts, `za`, next/previous and moves, group headings, the `.superpowers` suggestion (owner from a transcript, asking once, a new group), WORKSTREAMS and "part of" in the large view, saving and restoring the links |
-| `tabbar_spec.lua` | the bar's lines down the left and along the top, fitting and truncating, the bookmark , the key hints popup (follows the selection, goes on leaving the bar) |
+| `tabbar_spec.lua` | the bar's lines down the left and along the top, fitting and truncating, Claude's summary under the bar (follows the selection, the setting, the top bar's second row), the bookmark, the key hints popup (follows the selection, goes on leaving the bar) |
 | `config_page_spec.lua` | a row per setting, changing values with the page's keys |
 | `menu_spec.lua` | `<leader>o` keys and their descriptions with shortcuts, the panel |
 | `claude_spec.lua` | hook events to record fields, which Claude a tab listens to |
-| `claude_notes_spec.lua` | drawing the dossier (widths, columns, folds, no emoji), its plain-text copy, older shapes, redaction, reading the turn, the run's guards, the badges, bar, pills, headings, link and plan colours as highlight spans, WORKSTREAMS and part of |
-| `notes_spec.lua` | paths, on/off, captures (into notes another nvim changed too), notes never deleted for you, Claude's sheet reloading, Claude's pop-up, the dossier in the pane and the large view (Tab, Enter, `d`/`t`, clicks, fold state per note), sharing with another nvim, the picker's filtering |
+| `claude_notes_spec.lua` | drawing the dossier (widths, columns, folds, no emoji, a narrow column), a summary for every Claude tab, its plain-text copy, older shapes, redaction, reading the turn, the run's guards, the badges, bar, pills, headings, link and plan colours as highlight spans, WORKSTREAMS and part of |
+| `notes_spec.lua` | paths, opening and closing (Ctrl+Shift+e, twice to close), Ctrl+Enter to the terminal, the notes path script and skill link, captures without opening (into notes another nvim changed too), notes never deleted for you, Claude's sheet reloading, Claude's pop-up, the dossier in the pane and the large view (Tab, Enter, `d`/`t`, clicks, fold state per note), sharing with another nvim, the picker's filtering |
 | `overview_spec.lua` | the Claude overview's order, row text, preview and the link Ctrl+o opens, children grouped under their parent |
 | `restore_spec.lua` | saved sets per nvim, saving, migration, the picker, another nvim's tabs, the 10-set cap |
 | `grepmask_spec.lua`, `testrun_spec.lua`, `git_spec.lua` (gitkeys, pins), `phpstan_spec.lua`, `dbkeys_spec.lua`, `laravel_spec.lua`, `worktrees_spec.lua`, `localenv_spec.lua` | the smaller modules |
