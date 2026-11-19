@@ -65,9 +65,9 @@ describe("settings page", function()
       "Claude bookmark",
       "Notes side",
       "Notes size",
-      "Claude's notes",
+      "Claude's summary",
       "Claude's notes model",
-      "Claude's share",
+      "Summary's share",
     } do
       assert.is_not_nil(row(label), "no row for " .. label)
     end

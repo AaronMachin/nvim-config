@@ -23,6 +23,8 @@ describe("notes", function()
     notes = require "floatterm.notes"
     notes.setup()
     paths = H.isolate()
+    -- Ctrl+Shift+e twice quickly closes the notes; only the tests of that want it.
+    H.stub(notes, "DOUBLE_PRESS_MS", 0)
   end)
 
   after_each(function()
@@ -41,51 +43,62 @@ describe("notes", function()
     assert.equals(notes.dir() .. "/20261029-abcd.claude.json", p.claude_json)
   end)
 
-  describe("on for new tabs", function()
-    local settings = require "floatterm.settings"
-
+  describe("opening and closing", function()
     local function settle()
       vim.wait(50, function()
         return false
       end)
     end
 
-    it("leaves new tabs without notes when off (the default)", function()
-      local buf = H.sleep_tab { label = "api" }
-      settle()
-      assert.is_nil(ft.record(buf).notes_on)
-    end)
-
-    it("switches them on for every new tab with all tabs", function()
-      settings.set("notes_new_tabs", "all")
-      local buf = H.sleep_tab { label = "api" }
-      settle()
-      local record = ft.record(buf)
-      assert.is_true(record.notes_on)
-      assert.truthy(vim.uv.fs_stat(notes.paths(record).mine))
-    end)
-
-    it("with Claude tabs, skips shell tabs but catches one once claude starts in it", function()
-      settings.set("notes_new_tabs", "claude")
-      local shell = H.sleep_tab { label = "shell" }
-      local started = H.sleep_tab { kind = "claude", label = "claude" }
+    it("leaves new tabs with their notes closed, Claude ones too", function()
+      local shell = H.sleep_tab { label = "api" }
+      local claude = H.sleep_tab { kind = "claude", label = "claude" }
       settle()
       assert.is_nil(ft.record(shell).notes_on)
-      assert.is_true(ft.record(started).notes_on)
-
-      require("floatterm.claude").apply(ft.record(shell), { hook_event_name = "SessionStart", session_id = "a" })
-      settle()
-      assert.is_true(ft.record(shell).notes_on)
+      assert.is_nil(ft.record(claude).notes_on)
     end)
 
-    it("doesn't switch back on notes you switched off", function()
-      settings.set("notes_new_tabs", "claude")
-      local buf = H.sleep_tab { label = "shell" }
-      settle()
-      notes.set(buf, false)
-      require("floatterm.claude").apply(ft.record(buf), { hook_event_name = "SessionStart", session_id = "a" })
-      settle()
+    it("opens them with Ctrl+Shift+e, back to the terminal with it again, the pane staying", function()
+      H.stub(notes, "DOUBLE_PRESS_MS", 500)
+      local buf = H.sleep_tab { label = "api" }
+      H.flush(notes.DOUBLE_PRESS_MS + 50)
+      notes.toggle_focus()
+      assert.is_true(ft.record(buf).notes_on)
+      assert.equals(notes.state().mine, api.nvim_get_current_win())
+      H.flush(notes.DOUBLE_PRESS_MS + 50)
+      notes.toggle_focus()
+      assert.equals(ft.window(), api.nvim_get_current_win())
+      assert.is_true(ft.record(buf).notes_on)
+    end)
+
+    it("closes them with Ctrl+Shift+e twice, from either side", function()
+      H.stub(notes, "DOUBLE_PRESS_MS", 500)
+      local buf = H.sleep_tab { label = "api" }
+      -- Long enough after any press in an earlier test.
+      H.flush(notes.DOUBLE_PRESS_MS + 50)
+      -- From the terminal: the first press goes in, the second closes.
+      notes.toggle_focus()
+      notes.toggle_focus()
       assert.is_false(ft.record(buf).notes_on)
+      assert.equals(ft.window(), api.nvim_get_current_win())
+      -- From the notes: the first press goes back, the second closes.
+      H.flush(notes.DOUBLE_PRESS_MS + 50)
+      notes.toggle_focus()
+      H.flush(notes.DOUBLE_PRESS_MS + 50)
+      notes.toggle_focus()
+      notes.toggle_focus()
+      assert.is_false(ft.record(buf).notes_on)
+      assert.equals(ft.window(), api.nvim_get_current_win())
+    end)
+
+    it("says a tab has notes only once something is written in them", function()
+      local buf = H.sleep_tab { label = "api" }
+      notes.set(buf, true)
+      local record = ft.record(buf)
+      assert.is_false(notes.has_notes(record))
+      H.write(notes.paths(record).mine, "# api\n\ncheck the top bar\n")
+      assert.is_true(notes.has_notes(record))
+      assert.is_false(notes.has_notes { note_id = nil })
     end)
   end)
 

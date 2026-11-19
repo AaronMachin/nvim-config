@@ -25,18 +25,15 @@ M.defaults = {
   -- "bottom"), and the share of the terminal's room it takes.
   notes_side = "right",
   notes_share = 0.35,
-  -- Which newly opened tabs start with their notes showing: "off", "claude" (Claude
-  -- tabs, including a shell tab once `claude` starts in it) or "all". Tabs reopened
-  -- on start keep however they were saved.
-  notes_new_tabs = "off",
-  -- Whether Claude's half of a Claude tab's notes is kept up to date after each turn
-  -- (lua/floatterm/claude_notes), and the model that does it: "haiku" or "sonnet".
-  -- Where Claude's summary of a Claude tab's session shows: "bar" (under the tab bar
-  -- down the left), "pane" (its own pane beside the terminal), "asked" (only in the
-  -- large float, Ctrl+Shift+o) or "off" (not written at all).
+  -- Where Claude's summary of a Claude tab's session (lua/floatterm/claude_notes)
+  -- shows: "bar" (under the tab bar), "pane" (in the notes pane beside the terminal,
+  -- which then opens for Claude tabs by itself), "asked" (only in the large float,
+  -- Ctrl+Shift+o) or "off" (not written at all). And the model that writes it: "haiku"
+  -- or "sonnet".
   claude_summary = "bar",
   claude_notes_model = "haiku",
-  -- The most of the notes pane's height Claude's part takes (less when it's short).
+  -- The most of the tab bar's height (or the notes pane's) the summary takes, less
+  -- when it's short.
   claude_notes_share = 0.65,
 }
 

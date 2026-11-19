@@ -185,6 +185,31 @@ local function target_record()
   return ft.record(ft.current_buf() or -1)
 end
 
+-- Whether a tab's own notes have something in them beyond their heading, for the tab
+-- bar's ✎. Read again only when the file changed.
+local written_cache = {}
+function M.has_notes(record)
+  if not (record and record.note_id) then
+    return false
+  end
+  local path = paths_for(record.note_id).mine
+  local stat = vim.uv.fs_stat(path)
+  if not stat then
+    return false
+  end
+  local key = stat.mtime.sec .. "." .. stat.mtime.nsec .. "." .. stat.size
+  local cached = written_cache[path]
+  if cached and cached.key == key then
+    return cached.written
+  end
+  local written = vim.tbl_filter(function(line)
+    return vim.trim(line) ~= ""
+  end, read_lines(path) or {})
+  local has = #written > 1 or (#written == 1 and not written[1]:match "^#%s")
+  written_cache[path] = { key = key, written = has }
+  return has
+end
+
 -- Gives a tab a note_id if it has none, without making any file. Returns the record as
 -- it is now.
 function M.ensure_id(record)
@@ -811,9 +836,29 @@ function M.back()
   end
 end
 
--- Ctrl+Shift+e: between the terminal and its notes, switching them on if they're off.
--- With no box for them, the notes show over the terminal.
+-- How soon a second Ctrl+Shift+e closes the notes, in ms.
+M.DOUBLE_PRESS_MS = 500
+local last_press = nil
+
+-- Ctrl+Shift+e: between the terminal and its notes, opening them if they're closed.
+-- Twice within DOUBLE_PRESS_MS closes them, from either side. With no box for them,
+-- the notes show over the terminal.
 function M.toggle_focus()
+  local now = vim.uv.now()
+  if last_press and now - last_press < M.DOUBLE_PRESS_MS then
+    last_press = nil
+    local record = target_record()
+    if record and record.notes_on then
+      M.set(record.buf, false)
+    end
+    local win = floatterm().window()
+    if win and api.nvim_get_current_win() ~= win then
+      api.nvim_set_current_win(win)
+      vim.cmd "startinsert"
+    end
+    return
+  end
+  last_press = now
   if in_pane(api.nvim_get_current_win()) then
     M.back()
     return
@@ -1755,10 +1800,9 @@ local function notes_for_new(record)
   if restore and restore.restoring and restore.restoring() then
     return
   end
-  local wanted = require("floatterm.settings").get "notes_new_tabs"
-  -- With Claude's summary beside the terminal, a Claude tab's pane opens by itself.
-  local summary_pane = require("floatterm.settings").get "claude_summary" == "pane" and record.kind == "claude"
-  if wanted == "all" or (wanted == "claude" and record.kind == "claude") or summary_pane then
+  -- Your notes only open when you open them, but with Claude's summary beside the
+  -- terminal, a Claude tab's pane opens by itself to show it.
+  if require("floatterm.settings").get "claude_summary" == "pane" and record.kind == "claude" then
     -- After this event, so the change reaches FloatTermTabChanged's listeners (the tab
     -- bar's ✎) rather than firing inside another event's callback.
     local buf = record.buf

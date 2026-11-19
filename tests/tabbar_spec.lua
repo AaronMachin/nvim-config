@@ -206,7 +206,9 @@ describe("tab bar", function()
   describe("down the left", function()
     it("shows what a tab is first, then its state and folder underneath", function()
       H.sleep_tab { label = "shell" }
-      claude_tab { label = "api", status = "needs_you", title = "✳ Fixing login", notes_on = true }
+      local buf = claude_tab { label = "api", status = "needs_you", title = "✳ Fixing login", note_id = "20261120-pen" }
+      -- ✎: your notes have something in them.
+      H.write(require("floatterm.notes").paths(ft.record(buf)).mine, "# api\n\ncheck the top bar\n")
       local lines = draw()
       assert.truthy(lines[1]:find "^  %S", lines[1]) -- the shell's command
       assert.truthy(lines[2]:match "^  idle · shell$" or lines[2]:match "^  running · shell$", lines[2])

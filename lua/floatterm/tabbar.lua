@@ -235,8 +235,8 @@ local function vertical_tab(record, row)
   end
   -- Its emoji (lua/floatterm/emoji) leads the first line.
   table.insert(first, 1, { require("floatterm.emoji").glyph(record) .. " ", nil })
-  -- Notes on (lua/floatterm/notes), after the state.
-  if record.notes_on then
+  -- Your notes have something in them (lua/floatterm/notes), after the state.
+  if require("floatterm.notes").has_notes(record) then
     table.insert(second, { " ✎", nil })
   end
   table.insert(second, { " · " .. name, "FloatTermWorking" })
@@ -347,7 +347,7 @@ local function horizontal_tab(record, level, cap, row)
     end
     table.insert(chunks, part)
   end
-  if record.notes_on then
+  if require("floatterm.notes").has_notes(record) then
     table.insert(chunks, 2, { " ✎", nil })
   end
   if row.folded then
