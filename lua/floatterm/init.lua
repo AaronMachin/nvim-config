@@ -189,6 +189,12 @@ local function geometry(p, rows, cols)
   }
 end
 
+-- The rows the bar along the top takes: a second for Claude's summary when it shows
+-- under the bar, whichever tab is showing, so the terminal doesn't jump between tabs.
+local function top_bar_rows()
+  return settings.get "claude_summary" == "bar" and 2 or 1
+end
+
 -- Splits an outer box between the tab bar and the terminal. The bar is dropped when
 -- keeping it would leave the terminal too small.
 local function split(outer)
@@ -202,10 +208,11 @@ local function split(outer)
       }
     end
   elseif bar == "top" then
-    if outer.height - 1 - 2 >= MIN_ROWS then
+    local rows = top_bar_rows()
+    if outer.height - rows - 2 >= MIN_ROWS then
       return {
-        tabbar = { row = outer.row, col = outer.col, height = 1, width = outer.width },
-        terminal = { row = outer.row + 1, col = outer.col, height = outer.height - 1, width = outer.width },
+        tabbar = { row = outer.row, col = outer.col, height = rows, width = outer.width },
+        terminal = { row = outer.row + rows, col = outer.col, height = outer.height - rows, width = outer.width },
       }
     end
   end
@@ -565,7 +572,7 @@ local function open_split(buf)
     if bar == "left" then
       api.nvim_win_set_width(bar_win, fits.tabbar.width)
     else
-      api.nvim_win_set_height(bar_win, 1)
+      api.nvim_win_set_height(bar_win, top_bar_rows())
     end
     for option, value in pairs {
       winfixwidth = true,

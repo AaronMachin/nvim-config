@@ -380,13 +380,40 @@ describe("tab bar", function()
       H.sleep_tab { label = "shell" }
       claude_tab { label = "api", status = "done", title = "✳ Tidy" }
       local lines = draw()
-      assert.equals(1, #lines)
+      -- The second row is Claude's summary, empty for one without a summary.
+      assert.equals(2, #lines)
+      assert.equals("", vim.trim(lines[2]))
       assert.truthy(lines[1]:find("$ shell", 1, true))
       assert.truthy(lines[1]:find(" │ ▶ " .. ft.record(ft.tabs()[2].buf).emoji .. " ✓ done", 1, true))
       -- Each tab starts with its emoji.
       assert.truthy(lines[1]:find(ft.record(ft.tabs()[1].buf).emoji .. " $ shell", 1, true))
       assert.truthy(lines[1]:find("Tidy", 1, true))
       assert.truthy(lines[1]:find("api", 1, true))
+    end)
+
+    it("puts Claude's summary of the tab showing on the second row", function()
+      local notes = require "floatterm.notes"
+      local buf = claude_tab { label = "api", status = "working", note_id = "20261120-top" }
+      H.write(
+        notes.paths(ft.record(buf)).claude_json,
+        vim.json.encode {
+          title = "SD-1 · Login fix",
+          now = "Task 2",
+          tasks = { { name = "Schema", state = "done" }, { name = "Model", state = "in_progress" } },
+          links = { { title = "PR #9 console", url = "https://x/pull/9", note = "Opened" } },
+        }
+      )
+      local lines = draw()
+      for _, text in ipairs { "SD-1 · Login fix", "◌ Task 2", "75%", "▸ Model", "PR #9 console" } do
+        assert.truthy(lines[2]:find(text, 1, true), text .. " in " .. lines[2])
+      end
+      assert.is_true(vim.fn.strdisplaywidth(lines[2]) <= 196)
+    end)
+
+    it("has one row with Claude's summary shown elsewhere", function()
+      settings.set("claude_summary", "asked")
+      H.sleep_tab { label = "shell" }
+      assert.equals(1, #draw())
     end)
 
     it("shortens summaries, then scrolls to keep the current tab in view", function()

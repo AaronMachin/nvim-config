@@ -532,6 +532,58 @@ function M.summary_window()
   return summary_win and api.nvim_win_is_valid(summary_win) and summary_win or nil
 end
 
+-- Claude's summary of `record` on one line for the bar along the top, cut to `width`:
+-- the title, what Claude is doing (or asking), the progress bar, the task in progress
+-- and the first link. Chunks { text, hl }; nothing for a tab without a summary.
+function M.summary_line(record, width)
+  if not (record and record.kind == "claude" and record.note_id) then
+    return { { "", nil } }
+  end
+  local sheet = require("floatterm.notes").claude_sheet(record.note_id)
+  if not sheet.data then
+    return { { "", nil } }
+  end
+  local claude_notes = require "floatterm.claude_notes"
+  local data = claude_notes.normalise(sheet.data)
+  local parts = {}
+  if data.title ~= "" then
+    table.insert(parts, { { data.title, "Title" } })
+  end
+  local state = M.state(record)
+  if record.status == "needs_you" then
+    local asking = record.needs_you_message
+    table.insert(parts, { { state.glyph .. " " .. ((asking and asking ~= "") and asking or state.word), state.hl } })
+  elseif data.now ~= "" then
+    table.insert(parts, { { state.glyph .. " ", state.hl }, { data.now, nil } })
+  end
+  if #data.tasks > 0 then
+    local percent = claude_notes.progress(data.tasks)
+    local filled = math.floor(percent / 10 + 0.5)
+    table.insert(parts, {
+      { string.rep("▰", filled), "FloatTermDone" },
+      { string.rep("▱", 10 - filled), "FloatTermWorking" },
+      { (" %d%%"):format(percent), nil },
+    })
+    for _, task in ipairs(data.tasks) do
+      if task.state == "in_progress" then
+        table.insert(parts, { { "▸ " .. task.name, nil } })
+        break
+      end
+    end
+  end
+  if data.links[1] then
+    table.insert(parts, { { data.links[1].title, "FloatTermWorking" } })
+  end
+  local chunks = { { " ", nil } }
+  for i, part in ipairs(parts) do
+    if i > 1 then
+      table.insert(chunks, { " · ", "FloatTermWorking" })
+    end
+    vim.list_extend(chunks, part)
+  end
+  return truncate(chunks, width)
+end
+
 -- Whether Claude's summary shows under the bar: down the left only.
 local function summary_under_bar()
   return settings.get "claude_summary" == "bar" and settings.get "tabbar" ~= "top"
@@ -556,7 +608,7 @@ end
 
 local function window_config(box)
   if is_horizontal() then
-    return { relative = "editor", row = box.row, col = box.col, width = box.width, height = 1, border = "none" }
+    return { relative = "editor", row = box.row, col = box.col, width = box.width, height = box.height, border = "none" }
   end
   return {
     relative = "editor",
@@ -621,6 +673,11 @@ function M.redraw()
   local rows
   if is_horizontal() then
     rows, entries = render_horizontal(rows_drawn, current, config.width, math.min(selected or current, #rows_drawn))
+    -- Claude's summary of the selected tab, or the one showing, on the second row.
+    if config.height >= 2 then
+      local row = rows_drawn[selected or current]
+      table.insert(rows, M.summary_line(row and row.record, config.width))
+    end
   else
     rows, entries = render_vertical(rows_drawn, current, config.height, config.width)
   end
@@ -1115,7 +1172,7 @@ function M.map_bar_keys(buf)
       local i
       if is_horizontal() then
         local cell = vim.fn.strdisplaywidth(api.nvim_get_current_line():sub(1, cursor[2]))
-        i = tab_at_cell(cell)
+        i = cursor[1] == 1 and tab_at_cell(cell) or nil
       else
         i = tab_at_line(cursor[1] - 1)
       end
@@ -1216,7 +1273,8 @@ local function on_click()
   end
   local i
   if is_horizontal() then
-    i = tab_at_cell(cell - left)
+    -- The second row is Claude's summary, not tabs.
+    i = row == top and tab_at_cell(cell - left) or nil
   else
     local first = api.nvim_win_call(bar_win, function()
       return vim.fn.line "w0"
