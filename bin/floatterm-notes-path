@@ -1,0 +1,33 @@
+#!/bin/bash
+# Prints the path of your notes file for the floatterm tab this runs in (see
+# lua/floatterm/notes.lua), making the note if the tab has none yet, so Claude in the
+# tab can write in your notes. The notes-panel skill (claude/skills/notes-panel) tells
+# Claude to use it.
+#
+# Inside a floatterm tab $NVIM and $FLOATTERM_TAB_ID are set. Anywhere else, or if nvim
+# doesn't answer within 3 seconds, it says so on stderr and exits 1.
+
+fail() {
+  echo "floatterm-notes-path: $1" >&2
+  exit 1
+}
+
+[ -n "$NVIM" ] || fail "not running inside nvim, so there's no notes panel"
+case "$FLOATTERM_TAB_ID" in
+  '' | *[!0-9]*) fail "not running in a floatterm tab, so there's no notes panel" ;;
+esac
+
+out=$(mktemp "${TMPDIR:-/tmp}/floatterm-notes-path.XXXXXX") || fail "couldn't make a temporary file"
+trap 'rm -f "$out"' EXIT
+
+expr="luaeval('(function(id) local ok, m = pcall(require, \"floatterm.notes\") if not ok then return \"\" end local ok2, path = pcall(m.path_for_tab, id) return ok2 and path or \"\" end)(_A)', '$FLOATTERM_TAB_ID')"
+nvim --clean --headless --server "$NVIM" --remote-expr "$expr" >"$out" 2>/dev/null &
+pid=$!
+(sleep 3 && kill "$pid" 2>/dev/null) &
+watchdog=$!
+wait "$pid"
+kill "$watchdog" 2>/dev/null
+
+path=$(cat "$out")
+[ -n "$path" ] || fail "nvim didn't give a notes file for this tab"
+printf '%s\n' "$path"

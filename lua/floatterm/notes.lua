@@ -210,6 +210,42 @@ function M.has_notes(record)
   return has
 end
 
+-- The path of your notes file for the tab with id `tab_id` (as $FLOATTERM_TAB_ID has
+-- it), making the note if the tab has none: for bin/floatterm-notes-path, so Claude in
+-- the tab can write in your notes. "" for no such tab. Called over RPC, so the tab's
+-- record is changed after the call returns.
+function M.path_for_tab(tab_id)
+  tab_id = tonumber(tab_id)
+  local record
+  for _, r in ipairs(floatterm().tabs()) do
+    if r.id == tab_id and r.kind ~= "group" then
+      record = r
+    end
+  end
+  if not record then
+    return ""
+  end
+  local note_id = record.note_id or new_id()
+  local path = paths_for(note_id).mine
+  vim.fn.mkdir(M.dir(), "p")
+  if not vim.uv.fs_stat(path) then
+    local file = io.open(path, "w")
+    if file then
+      file:write("# " .. floatterm().name(record) .. "\n")
+      file:close()
+    end
+  end
+  if not record.note_id then
+    local buf = record.buf
+    vim.schedule(function()
+      if floatterm().record(buf) and not floatterm().record(buf).note_id then
+        floatterm().update(buf, { note_id = note_id })
+      end
+    end)
+  end
+  return path
+end
+
 -- Gives a tab a note_id if it has none, without making any file. Returns the record as
 -- it is now.
 function M.ensure_id(record)

@@ -142,6 +142,60 @@ describe("notes", function()
     end)
   end)
 
+  describe("for Claude in the tab", function()
+    -- Runs bin/floatterm-notes-path as Claude would from tab `id`, answering its call
+    -- to this nvim while it waits.
+    local function notes_path(env)
+      local done
+      vim.system({ H.config .. "/bin/floatterm-notes-path" }, { text = true, env = env }, function(result)
+        done = result
+      end)
+      H.wait(5000, function()
+        return done ~= nil
+      end, "the script didn't finish")
+      return done
+    end
+
+    it("prints the tab's notes file, making the note when it has none", function()
+      local server = vim.fn.serverstart()
+      local buf = H.sleep_tab { kind = "claude", label = "api" }
+      local result = notes_path { NVIM = server, FLOATTERM_TAB_ID = tostring(ft.record(buf).id) }
+      vim.fn.serverstop(server)
+      assert.equals(0, result.code, result.stderr)
+      local path = vim.trim(result.stdout)
+      H.wait(1000, function()
+        return ft.record(buf).note_id ~= nil
+      end, "no note_id")
+      assert.equals(notes.paths(ft.record(buf)).mine, path)
+      assert.same({ "# api" }, lines_of(path))
+      -- Its pane stays closed.
+      assert.is_not_true(ft.record(buf).notes_on)
+    end)
+
+    it("says so outside a floatterm tab", function()
+      local result = notes_path { NVIM = "", FLOATTERM_TAB_ID = "" }
+      assert.equals(1, result.code)
+      assert.truthy(result.stderr:find("not running inside nvim", 1, true), result.stderr)
+    end)
+
+    it("is linked into Claude's skills by the install script, and taken out again", function()
+      local dir = H.tmpdir "claude"
+      local env = { CLAUDE_SETTINGS_FILE = dir .. "/settings.json", CLAUDE_SKILLS_DIR = dir .. "/skills" }
+      local script = H.config .. "/install-claude-hooks.sh"
+      local result = vim.system({ script }, { text = true, env = env }):wait()
+      assert.equals(0, result.code, result.stderr)
+      local link = dir .. "/skills/notes-panel"
+      assert.equals(vim.uv.fs_realpath(H.config .. "/claude/skills/notes-panel"), vim.uv.fs_realpath(link))
+      assert.truthy(vim.uv.fs_stat(link .. "/SKILL.md"))
+      -- Again: nothing changes.
+      result = vim.system({ script }, { text = true, env = env }):wait()
+      assert.equals(0, result.code, result.stderr)
+      result = vim.system({ script, "--uninstall" }, { text = true, env = env }):wait()
+      assert.equals(0, result.code, result.stderr)
+      assert.is_nil(vim.uv.fs_lstat(link))
+    end)
+  end)
+
   describe("Ctrl+Enter to the terminal", function()
     local sent
 

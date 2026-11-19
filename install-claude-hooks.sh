@@ -1,12 +1,14 @@
 #!/bin/bash
 # Adds the floating terminal's Claude Code hooks (bin/floatterm-claude-hook, see
-# lua/floatterm/claude.lua) to Claude's user settings, or removes them.
+# lua/floatterm/claude.lua) to Claude's user settings, and links its skills
+# (claude/skills) into Claude's skills folder. Or removes both.
 #
 #   ./install-claude-hooks.sh [--uninstall] [settings file]
 #
 # The settings file is ~/.claude/settings.json unless given here or in
-# $CLAUDE_SETTINGS_FILE. Everything else in it is left alone, running it again
-# adds nothing, and --uninstall takes out only the hooks this added.
+# $CLAUDE_SETTINGS_FILE, and the skills folder ~/.claude/skills unless set in
+# $CLAUDE_SKILLS_DIR. Everything else in them is left alone, running it again
+# adds nothing, and --uninstall takes out only what this added.
 
 set -euo pipefail
 
@@ -16,7 +18,7 @@ for arg in "$@"; do
   case "$arg" in
     --uninstall) uninstall=true ;;
     -h | --help)
-      sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) settings="$arg" ;;
@@ -25,6 +27,30 @@ done
 settings="${settings:-${CLAUDE_SETTINGS_FILE:-$HOME/.claude/settings.json}}"
 
 repo=$(cd "$(dirname "$0")" && pwd -P)
+
+# Each skill in claude/skills as a link in the skills folder. A skill of the same name
+# that isn't this repo's link is left alone, with a warning.
+skills_dir="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+for skill in "$repo"/claude/skills/*/; do
+  [ -d "$skill" ] || continue
+  skill=${skill%/}
+  name=$(basename "$skill")
+  link="$skills_dir/$name"
+  if $uninstall; then
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$skill" ]; then
+      rm "$link"
+      echo "Removed the $name skill from $skills_dir."
+    fi
+  elif [ -L "$link" ] && [ "$(readlink "$link")" = "$skill" ]; then
+    :
+  elif [ -e "$link" ] || [ -L "$link" ]; then
+    echo "Left $link alone: a skill called $name is already there." >&2
+  else
+    mkdir -p "$skills_dir"
+    ln -s "$skill" "$link"
+    echo "Linked the $name skill into $skills_dir."
+  fi
+done
 # Quoted, as Claude runs the command through a shell.
 command="\"$repo/bin/floatterm-claude-hook\""
 events="SessionStart UserPromptSubmit Notification PostToolUse Stop SessionEnd"
