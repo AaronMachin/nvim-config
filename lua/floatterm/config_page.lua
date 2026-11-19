@@ -69,12 +69,6 @@ local ROWS = {
   -- Kept as a fraction, shown and typed as a percentage.
   { key = "notes_share", label = "Notes size", number = { min = 15, max = 60, step = 5, percent = true } },
   {
-    key = "claude_notes",
-    label = "Claude's notes",
-    choices = { { true, "on" }, { false, "off" } },
-    note = "kept up to date after each turn",
-  },
-  {
     key = "claude_summary",
     label = "Claude's summary",
     choices = {
@@ -83,6 +77,7 @@ local ROWS = {
       { "asked", "only when asked" },
       { "off", "off" },
     },
+    note = "kept up to date after each turn",
   },
   {
     key = "claude_notes_model",

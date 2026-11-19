@@ -891,7 +891,7 @@ exit "$(cat "$L/code")"]]):format(log)
 
     it("does nothing with the setting off", function()
       local messages = H.capture_notify()
-      settings.set("claude_notes", false)
+      settings.set("claude_summary", "off")
       cn.refresh(claude_tab())
       assert.is_not_nil(H.notified(messages, "switched off"))
       H.flush(200)

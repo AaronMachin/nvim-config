@@ -75,6 +75,18 @@ describe("settings page", function()
     assert.truthy(row("Notes size"):find("35%", 1, true))
   end)
 
+  it("reads Claude's notes switched off from before as Claude's summary off", function()
+    H.write(settings.path, vim.json.encode { claude_notes = false })
+    settings.reload()
+    assert.equals("off", settings.get "claude_summary")
+    H.write(settings.path, vim.json.encode { claude_notes = false, claude_summary = "asked" })
+    settings.reload()
+    assert.equals("asked", settings.get "claude_summary")
+    H.write(settings.path, vim.json.encode {})
+    settings.reload()
+    assert.equals("bar", settings.get "claude_summary")
+  end)
+
   it("changes a choice with l and h, stopping at the ends, and Enter wraps round", function()
     go_to "Tab bar"
     keys "l"

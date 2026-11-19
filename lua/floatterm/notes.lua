@@ -602,11 +602,15 @@ local function draw(record, box, overlay)
   local mine = mine_buf(record)
   local width = math.max(1, box.width - 2)
   local zindex = overlay and 60 or 50
-  local show_claude = (
-    (record.kind == "claude" and settings.get "claude_notes")
-    or vim.uv.fs_stat(paths.claude) ~= nil
-    or vim.uv.fs_stat(paths.claude_json) ~= nil
-  ) and box.height >= 6
+  -- Claude's part only shows here with its summary set to show beside the terminal;
+  -- otherwise it's under the tab bar, or in the large float when asked for.
+  local show_claude = settings.get "claude_summary" == "pane"
+    and (
+      record.kind == "claude"
+      or vim.uv.fs_stat(paths.claude) ~= nil
+      or vim.uv.fs_stat(paths.claude_json) ~= nil
+    )
+    and box.height >= 6
 
   local top, height = box.row, box.height
   -- A sheet written before Claude's notes came as data has no .json: have it rewritten
@@ -977,8 +981,13 @@ function M.read_claude()
     return
   end
   local from_win, from_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
-  -- Your notes' file is <note_id>.md.
+  -- From your notes (their file is <note_id>.md), or from a terminal tab.
   local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
+  local tab = floatterm().record(from_buf)
+  if not note_id and tab then
+    note_id = tab.note_id
+  end
+  local in_terminal = vim.bo[from_buf].buftype == "terminal"
   local stamp = note_id and claude_stamps[note_id]
   local sheet = note_id and current_sheet(note_id) or { lines = {} }
   if note_id and claude_stamps[note_id] ~= stamp then
@@ -989,7 +998,7 @@ function M.read_claude()
     vim.notify("No Claude notes for this tab yet", vim.log.levels.INFO)
     return
   end
-  local typing = api.nvim_get_mode().mode:sub(1, 1) == "i"
+  local typing = api.nvim_get_mode().mode:sub(1, 1) == "i" or api.nvim_get_mode().mode:sub(1, 1) == "t"
   local cursor = api.nvim_win_get_cursor(from_win)
   if typing then
     vim.cmd "stopinsert"
@@ -997,7 +1006,7 @@ function M.read_claude()
 
   local width = math.max(20, math.min(100, vim.o.columns - 6))
   local most = math.max(3, math.min(math.floor(vim.o.lines * 0.8), vim.o.lines - 6))
-  local record = pane.buf and floatterm().record(pane.buf)
+  local record = tab or (pane.buf and floatterm().record(pane.buf))
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   if not sheet.data then
@@ -1132,6 +1141,12 @@ function M.read_claude()
       return
     end
     api.nvim_set_current_win(from_win)
+    if in_terminal then
+      if typing then
+        vim.cmd "startinsert"
+      end
+      return
+    end
     pcall(api.nvim_win_set_cursor, from_win, cursor)
     if typing then
       local line = api.nvim_buf_get_lines(from_buf, cursor[1] - 1, cursor[1], false)[1] or ""
@@ -1741,7 +1756,9 @@ local function notes_for_new(record)
     return
   end
   local wanted = require("floatterm.settings").get "notes_new_tabs"
-  if wanted == "all" or (wanted == "claude" and record.kind == "claude") then
+  -- With Claude's summary beside the terminal, a Claude tab's pane opens by itself.
+  local summary_pane = require("floatterm.settings").get "claude_summary" == "pane" and record.kind == "claude"
+  if wanted == "all" or (wanted == "claude" and record.kind == "claude") or summary_pane then
     -- After this event, so the change reaches FloatTermTabChanged's listeners (the tab
     -- bar's ✎) rather than firing inside another event's callback.
     local buf = record.buf
@@ -1772,6 +1789,7 @@ function M.setup()
         if not keys_added then
           keys_added = true
           ft.add_tab_key("<C-S-e>", M.toggle_focus, "terminal into the notes and back")
+          ft.add_tab_key("<C-S-o>", M.read_claude, "terminal show all of Claude's summary")
         end
         for _, record in ipairs(ft.tabs()) do
           if not seen[record.buf] then

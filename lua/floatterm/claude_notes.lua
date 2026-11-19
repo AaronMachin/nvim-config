@@ -1,6 +1,6 @@
 -- Claude's half of a Claude tab's notes: a dossier of the session kept up to date by a
 -- small, cheap Claude (the claude_notes_model setting, haiku by default) after each
--- turn. The claude_notes setting switches it off everywhere.
+-- turn. The claude_summary setting at "off" switches it off everywhere.
 --
 -- When the tab's Claude finishes a turn (the Stop hook, through lua/floatterm/claude),
 -- whether or not its notes pane is open (it gets a note_id then if it has none), the turn is read from Claude Code's transcript (from the
@@ -1054,7 +1054,7 @@ local function wanted(record)
     and record.kind == "claude"
     and record.note_id
     and record.transcript_path
-    and settings.get "claude_notes"
+    and settings.get "claude_summary" ~= "off"
 end
 
 -- Whether `record` is the tab that keeps its note's Claude half: the first in tab order
@@ -1658,7 +1658,7 @@ end
 function M.refresh(record)
   local floatterm = require "floatterm"
   record = with_note(record or floatterm.record(floatterm.current_buf() or -1))
-  if not settings.get "claude_notes" then
+  if settings.get "claude_summary" == "off" then
     vim.notify("Claude's notes: switched off in the settings", vim.log.levels.WARN)
   elseif not (record and record.kind == "claude") then
     vim.notify("Claude's notes: not a Claude tab", vim.log.levels.WARN)
@@ -1675,7 +1675,7 @@ end
 -- current shape now, rather than at the tab's next turn. Quiet: nothing is said when
 -- it can't run (no conversation yet, another tab keeps these notes).
 function M.upgrade(record)
-  if settings.get "claude_notes" and record and record.transcript_path and keeps(record) then
+  if settings.get "claude_summary" ~= "off" and record and record.transcript_path and keeps(record) then
     start(record, 0)
   end
 end

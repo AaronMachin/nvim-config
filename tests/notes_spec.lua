@@ -183,6 +183,8 @@ describe("notes", function()
   end)
 
   it("has an old-format Claude sheet (no .json) rewritten once when it's shown", function()
+    -- Claude's part only shows in the pane with its summary set to show there.
+    require("floatterm.settings").set("claude_summary", "pane")
     local cn = require "floatterm.claude_notes"
     local asked = {}
     local real = cn.upgrade
@@ -309,6 +311,11 @@ describe("notes", function()
   end)
 
   describe("Claude's sheet from another nvim", function()
+    before_each(function()
+      -- Claude's part only shows in the pane with its summary set to show there.
+      require("floatterm.settings").set("claude_summary", "pane")
+    end)
+
     local buf, record, claude_win
 
     local function sheet_text()
@@ -357,6 +364,49 @@ describe("notes", function()
     end)
   end)
 
+  describe("Claude's summary setting", function()
+    local function summarised()
+      local buf = H.sleep_tab { label = "api" }
+      ft.update(buf, { kind = "claude", note_id = "20261120-sum" })
+      H.write(notes.paths(ft.record(buf)).claude, "# Summary of chat\nFixing login\n")
+      return buf
+    end
+
+    it("keeps Claude's part out of the pane unless it's set to show beside the terminal", function()
+      local buf = summarised()
+      notes.set(buf, true)
+      notes.redraw()
+      assert.is_nil(notes.state().claude)
+      assert.truthy(notes.state().mine)
+      require("floatterm.settings").set("claude_summary", "pane")
+      notes.redraw()
+      assert.truthy(notes.state().claude)
+    end)
+
+    it("opens the pane for a new Claude tab by itself when set to show beside the terminal", function()
+      require("floatterm.settings").set("claude_summary", "pane")
+      local buf = H.sleep_tab { kind = "claude", label = "api" }
+      H.wait(1000, function()
+        return ft.record(buf).notes_on == true
+      end, "pane didn't open")
+      local shell = H.sleep_tab { label = "shell" }
+      H.flush(100)
+      assert.is_nil(ft.record(shell).notes_on)
+    end)
+
+    it("shows it all with Ctrl+Shift+o from the terminal tab, and goes back typing", function()
+      summarised()
+      api.nvim_set_current_win(ft.window())
+      vim.cmd "startinsert"
+      notes.read_claude()
+      local popup = api.nvim_get_current_win()
+      assert.is_not.equals(ft.window(), popup)
+      assert.truthy(vim.tbl_contains(api.nvim_buf_get_lines(0, 0, -1, false), "Fixing login"))
+      keys "q"
+      assert.equals(ft.window(), api.nvim_get_current_win())
+    end)
+  end)
+
   describe("Claude's notes pop-up", function()
     local buf, record
 
@@ -401,6 +451,11 @@ describe("notes", function()
   end)
 
   describe("Claude's dossier in the pane and the large view", function()
+    before_each(function()
+      -- Claude's part only shows in the pane with its summary set to show there.
+      require("floatterm.settings").set("claude_summary", "pane")
+    end)
+
     local buf, record, opened
 
     local DOSSIER = {
