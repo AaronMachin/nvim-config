@@ -75,6 +75,16 @@ local ROWS = {
     note = "kept up to date after each turn",
   },
   {
+    key = "claude_summary",
+    label = "Claude's summary",
+    choices = {
+      { "bar", "under the tab bar" },
+      { "pane", "beside the terminal" },
+      { "asked", "only when asked" },
+      { "off", "off" },
+    },
+  },
+  {
     key = "claude_notes_model",
     label = "Claude's notes model",
     choices = { { "haiku", "haiku" }, { "sonnet", "sonnet" } },

@@ -298,6 +298,79 @@ describe("tab bar", function()
     end)
   end)
 
+  describe("Claude's summary under the bar", function()
+    local notes
+
+    before_each(function()
+      notes = require "floatterm.notes"
+    end)
+
+    -- A Claude tab with a summary whose title is `title`.
+    local function summarised(label, title)
+      local buf = claude_tab { label = label, status = "working", note_id = "20261120-" .. label }
+      local paths = notes.paths(ft.record(buf))
+      H.write(paths.claude_json, vim.json.encode { title = title, now = "Task 1", tasks = { { name = "Schema", state = "in_progress" } } })
+      return buf
+    end
+
+    local function summary_text()
+      local win = tabbar.summary_window()
+      if not win then
+        return nil
+      end
+      return table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false), "\n")
+    end
+
+    it("shows the tab you're in below the tab list, in the same box", function()
+      summarised("api", "SD-1 · Login fix")
+      tabbar.redraw()
+      assert.truthy(summary_text(), "no summary")
+      assert.truthy(summary_text():find("Login fix", 1, true), summary_text())
+      local bar = api.nvim_win_get_config(tabbar.window())
+      local below = api.nvim_win_get_config(tabbar.summary_window())
+      assert.equals(ft.layout().tabbar.height, bar.height + below.height + 4)
+      assert.is_true(below.width <= 28)
+    end)
+
+    it("shows nothing for a shell tab or a Claude tab without one yet", function()
+      H.sleep_tab { label = "shell" }
+      tabbar.redraw()
+      assert.is_nil(tabbar.summary_window())
+      claude_tab { label = "fresh", status = "working", note_id = "20261120-fresh" }
+      tabbar.redraw()
+      assert.is_nil(tabbar.summary_window())
+    end)
+
+    it("follows the selection in the bar, then goes back to the tab you're in", function()
+      local first = summarised("one", "First piece")
+      summarised("two", "Second piece")
+      tabbar.redraw()
+      assert.truthy(summary_text():find("Second piece", 1, true))
+      tabbar.enter()
+      vim.api.nvim_feedkeys(vim.keycode "k", "x", false)
+      assert.truthy(summary_text():find("First piece", 1, true), summary_text())
+      vim.api.nvim_set_current_win(ft.window())
+      H.wait(1000, function()
+        return summary_text() and summary_text():find("Second piece", 1, true)
+      end, "didn't go back to the current tab")
+      -- Switching tab with the keys changes it too.
+      ft.focus_buf(first)
+      tabbar.redraw()
+      assert.truthy(summary_text():find("First piece", 1, true))
+    end)
+
+    it("isn't drawn under the bar with the setting elsewhere, or with the bar along the top", function()
+      summarised("api", "SD-1 · Login fix")
+      settings.set("claude_summary", "asked")
+      tabbar.redraw()
+      assert.is_nil(tabbar.summary_window())
+      settings.set("claude_summary", "bar")
+      settings.set("tabbar", "top")
+      tabbar.redraw()
+      assert.is_nil(tabbar.summary_window())
+    end)
+  end)
+
   describe("along the top", function()
     before_each(function()
       settings.set("tabbar", "top")

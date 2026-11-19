@@ -32,6 +32,10 @@ M.defaults = {
   -- Whether Claude's half of a Claude tab's notes is kept up to date after each turn
   -- (lua/floatterm/claude_notes), and the model that does it: "haiku" or "sonnet".
   claude_notes = true,
+  -- Where Claude's summary of a Claude tab's session shows: "bar" (under the tab bar
+  -- down the left), "pane" (its own pane beside the terminal), "asked" (only in the
+  -- large float, Ctrl+Shift+o) or "off" (not written at all).
+  claude_summary = "bar",
   claude_notes_model = "haiku",
   -- The most of the notes pane's height Claude's part takes (less when it's short).
   claude_notes_share = 0.65,

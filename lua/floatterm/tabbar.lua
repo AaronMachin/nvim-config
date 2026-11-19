@@ -429,13 +429,112 @@ local function render_horizontal(rows, current, width, shown)
   return { truncate(line, width) }, spans
 end
 
+-- Claude's summary under the bar down the left: its own float below the bar's, in the
+-- same box, for the selected tab while you're in the bar, else the tab you're in.
+local summary_win, summary_buf = nil, nil
+local summary_ns = api.nvim_create_namespace "floatterm_tabbar_summary"
+-- The summary last drawn, so the once-a-second redraws only read its files again when
+-- they changed: { key, lines, highlights }.
+local summary_cache = nil
+
+local function close_summary()
+  if summary_win and api.nvim_win_is_valid(summary_win) then
+    api.nvim_win_close(summary_win, true)
+  end
+  summary_win = nil
+end
+
 local function close()
   if bar_win and api.nvim_win_is_valid(bar_win) then
     api.nvim_win_close(bar_win, true)
   end
   bar_win = nil
   selected = nil
+  close_summary()
   close_hint()
+end
+
+-- Claude's summary of `record`'s session drawn `width` cells wide: its lines and
+-- highlights, or nil for a tab without one (a shell, or a Claude tab before its first
+-- summary).
+function M.summary_lines(record, width)
+  if not (record and record.kind == "claude" and record.note_id) then
+    return nil
+  end
+  local notes = require "floatterm.notes"
+  local paths = notes.paths(record)
+  local json = vim.uv.fs_stat(paths.claude_json)
+  local md = vim.uv.fs_stat(paths.claude)
+  if not (json or (md and md.size > 0)) then
+    return nil
+  end
+  local key = table.concat({
+    record.note_id,
+    width,
+    tostring(record.status),
+    tostring(record.needs_you_message),
+    json and json.mtime.sec .. "." .. json.mtime.nsec or "",
+    md and md.mtime.sec .. "." .. md.mtime.nsec or "",
+  }, "|")
+  if not (summary_cache and summary_cache.key == key) then
+    local lines, highlights = notes.claude_preview(record.note_id, width, record)
+    summary_cache = { key = key, lines = lines, highlights = highlights }
+  end
+  return summary_cache.lines, summary_cache.highlights
+end
+
+-- Draws the summary into `box` (border included), or closes it when `lines` is nil.
+local function draw_summary(box, lines, highlights)
+  if not lines then
+    close_summary()
+    return
+  end
+  if not (summary_buf and api.nvim_buf_is_valid(summary_buf)) then
+    summary_buf = api.nvim_create_buf(false, true)
+    vim.bo[summary_buf].filetype = "floattermsummary"
+  end
+  vim.bo[summary_buf].modifiable = true
+  api.nvim_buf_set_lines(summary_buf, 0, -1, false, lines)
+  vim.bo[summary_buf].modifiable = false
+  api.nvim_buf_clear_namespace(summary_buf, summary_ns, 0, -1)
+  for _, hl in ipairs(highlights or {}) do
+    pcall(api.nvim_buf_set_extmark, summary_buf, summary_ns, hl.line, hl.col, {
+      end_col = hl.end_col,
+      hl_group = hl.group,
+      priority = 200,
+    })
+  end
+  local config = {
+    relative = "editor",
+    row = box.row,
+    col = box.col,
+    width = box.width - 2,
+    height = box.height - 2,
+    border = "rounded",
+  }
+  if summary_win and api.nvim_win_is_valid(summary_win) then
+    api.nvim_win_set_config(summary_win, config)
+  else
+    config.style = "minimal"
+    config.focusable = false
+    config.noautocmd = true
+    summary_win = api.nvim_open_win(summary_buf, false, config)
+    vim.wo[summary_win].wrap = false
+    vim.wo[summary_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
+  end
+  api.nvim_win_call(summary_win, function()
+    vim.fn.winrestview { topline = 1, lnum = 1, col = 0 }
+  end)
+end
+
+-- The summary's window, for tests.
+function M.summary_window()
+  return summary_win and api.nvim_win_is_valid(summary_win) and summary_win or nil
+end
+
+-- Whether Claude's summary shows under the bar: down the left only.
+local function summary_under_bar()
+  return settings.get "claude_summary" == "bar" and settings.get "tabbar" ~= "top"
 end
 
 local function is_open()
@@ -499,6 +598,24 @@ function M.redraw()
   rows_drawn = groups.rows()
   -- A tab folded away marks its parent's row.
   local current = groups.row_of(rows_drawn, floatterm.record(floatterm.current_buf() or -1)) or 1
+
+  -- Claude's summary takes the bottom of the box, up to the claude_notes_share setting
+  -- of it, as long as the tab list keeps at least 3 rows.
+  local summary, summary_hl, summary_box
+  if summary_under_bar() then
+    local row = rows_drawn[selected or current]
+    summary, summary_hl = M.summary_lines(row and row.record, box.width - 2)
+    if summary then
+      local room = math.min(math.floor(box.height * settings.get "claude_notes_share") - 2, box.height - 7)
+      if room >= 1 then
+        local height = math.min(#summary, room) + 2
+        summary_box = { row = box.row + box.height - height, col = box.col, width = box.width, height = height }
+        box = { row = box.row, col = box.col, width = box.width, height = box.height - height }
+      else
+        summary = nil
+      end
+    end
+  end
 
   local config = window_config(box)
   local rows
@@ -575,6 +692,7 @@ function M.redraw()
     vim.wo[bar_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
   end
 
+  draw_summary(summary_box, summary, summary_hl)
   update_hint()
   if selected then
     place_cursor()
@@ -1325,7 +1443,13 @@ function M.setup()
   local keys_added = false
   api.nvim_create_autocmd("User", {
     group = group,
-    pattern = { "FloatTermLayoutChanged", "FloatTermTabsChanged", "FloatTermTabChanged", "FloatTermSettingsChanged" },
+    pattern = {
+      "FloatTermLayoutChanged",
+      "FloatTermTabsChanged",
+      "FloatTermTabChanged",
+      "FloatTermSettingsChanged",
+      "FloatTermClaudeNotesChanged",
+    },
     callback = function(args)
       local floatterm = package.loaded["floatterm"]
       if args.match == "FloatTermTabsChanged" and floatterm then
