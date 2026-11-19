@@ -171,6 +171,23 @@ describe("claude hooks", function()
       assert.equals(record, stopped)
     end)
 
+    it("Stop: still working while background agents or commands are running", function()
+      H.stub(require "floatterm.claude_notes", "on_stop", function() end)
+      claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "go" })
+      claude.apply(record, {
+        hook_event_name = "Stop",
+        background_tasks = {
+          { id = "task-1", type = "subagent", status = "running" },
+          { id = "task-2", type = "shell", status = "completed" },
+        },
+      })
+      assert.equals("working", record.status)
+      -- Claude's turn when the agent reports back ends with nothing left running.
+      claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "" })
+      claude.apply(record, { hook_event_name = "Stop", background_tasks = {} })
+      assert.equals("done", record.status)
+    end)
+
     it("SessionEnd makes it a shell tab again, keeping start_ref only over a /clear", function()
       claude.apply(record, { hook_event_name = "SessionStart", session_id = "a", transcript_path = "/t" })
       claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "hi" })

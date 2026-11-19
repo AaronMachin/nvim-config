@@ -15,7 +15,10 @@
 --                     permission
 --   PostToolUse       status back to "working" from "needs_you", as a tool only runs
 --                     once the question was answered
---   Stop              status = "done"
+--   Stop              status = "done", or still "working" while the event lists
+--                     background work still running (background agents or commands,
+--                     its background_tasks): Claude starts another turn when that
+--                     finishes, and the Stop after it says done
 -- needs_you_message goes whenever the status moves on from "needs_you".
 --   SessionEnd        back to a shell tab, for when Claude exits and its shell stays
 -- A key pressed in a needs-you tab's terminal also takes it to "working" at once, as
@@ -34,6 +37,19 @@
 -- The next SessionStart in the tab replaces `resume`.
 
 local M = {}
+
+-- Background agents and commands a Stop event lists as not finished yet.
+local FINISHED = { completed = true, failed = true, killed = true, stopped = true, cancelled = true, done = true }
+local function running_in_background(event)
+  local running = 0
+  for _, task in ipairs(type(event.background_tasks) == "table" and event.background_tasks or {}) do
+    if type(task) == "table" and not FINISHED[task.status] then
+      running = running + 1
+    end
+  end
+  return running
+end
+
 
 -- Notification types that mean Claude is waiting on an answer. Others (idle_prompt
 -- after it has finished, auth_success, agent_completed) aren't asks.
@@ -241,7 +257,12 @@ local function apply(record, event, pid)
     local first = record.last_prompt == nil
     claude.status = "working"
     claude.needs_you_message = vim.NIL
-    claude.last_prompt = first_line(event.prompt)
+    -- A turn Claude starts itself (a background agent reporting back) may have no
+    -- prompt of yours: the last one you gave stays.
+    local line = first_line(event.prompt)
+    if line and line ~= "" then
+      claude.last_prompt = line
+    end
     floatterm.update(record.buf, claude)
     if first then
       pcall(function()
@@ -263,7 +284,7 @@ local function apply(record, event, pid)
       floatterm.update(record.buf, { status = "working", needs_you_message = vim.NIL })
     end
   elseif name == "Stop" then
-    claude.status = "done"
+    claude.status = running_in_background(event) > 0 and "working" or "done"
     claude.needs_you_message = vim.NIL
     floatterm.update(record.buf, claude)
     pcall(function()
