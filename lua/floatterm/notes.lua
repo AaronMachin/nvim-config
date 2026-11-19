@@ -1364,10 +1364,10 @@ end
 
 -- Puts lines at the end of a tab's notes, switching them on if they're off, and saves.
 -- With `gap`, a blank line first unless the notes already end with one.
+-- Adds `lines` to the end of the tab's notes without opening them, and says so.
 local function append(record, lines, gap)
-  if not record.notes_on then
-    M.set(record.buf, true)
-  end
+  ensure_note(record)
+  record = floatterm().record(record.buf) or record
   local buf = latest_mine(record)
   local last = api.nvim_buf_get_lines(buf, -2, -1, false)[1] or ""
   if gap and vim.trim(last) ~= "" then
@@ -1384,6 +1384,9 @@ local function append(record, lines, gap)
       api.nvim_win_set_cursor(win, { api.nvim_buf_line_count(buf), 0 })
     end
   end
+  vim.notify(
+    "Added to notes for " .. floatterm().name(record) .. (record.notes_on and "" or " (Ctrl+Shift+e)")
+  )
 end
 
 -- `### HH:MM · source` and the text in a fenced block, long enough not to be closed by
@@ -1475,7 +1478,6 @@ function M.capture()
   local source = relative(api.nvim_buf_get_name(0)) .. ":" .. first .. (last ~= first and ("-" .. last) or "")
   local lang = vim.bo.filetype ~= "" and vim.bo.filetype or nil
   append(record, block(source, text, lang), true)
-  vim.notify("Added to notes for " .. ft.name(record))
 end
 
 -- <leader>o a: one line, `- HH:MM text`.
