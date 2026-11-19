@@ -186,10 +186,14 @@ describe("notes", function()
       local dir = H.tmpdir "claude"
       local env = { CLAUDE_SETTINGS_FILE = dir .. "/settings.json", CLAUDE_SKILLS_DIR = dir .. "/skills" }
       local script = H.config .. "/install-claude-hooks.sh"
+      -- A link to a skill this repo no longer has (notes-panel, renamed floatterm) goes.
+      vim.fn.mkdir(dir .. "/skills", "p")
+      vim.uv.fs_symlink(H.config .. "/claude/skills/notes-panel", dir .. "/skills/notes-panel")
       local result = vim.system({ script }, { text = true, env = env }):wait()
       assert.equals(0, result.code, result.stderr)
-      local link = dir .. "/skills/notes-panel"
-      assert.equals(vim.uv.fs_realpath(H.config .. "/claude/skills/notes-panel"), vim.uv.fs_realpath(link))
+      assert.is_nil(vim.uv.fs_lstat(dir .. "/skills/notes-panel"))
+      local link = dir .. "/skills/floatterm"
+      assert.equals(vim.uv.fs_realpath(H.config .. "/claude/skills/floatterm"), vim.uv.fs_realpath(link))
       assert.truthy(vim.uv.fs_stat(link .. "/SKILL.md"))
       -- Again: nothing changes.
       result = vim.system({ script }, { text = true, env = env }):wait()

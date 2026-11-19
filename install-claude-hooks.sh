@@ -51,6 +51,17 @@ for skill in "$repo"/claude/skills/*/; do
     echo "Linked the $name skill into $skills_dir."
   fi
 done
+# A link to a skill this repo no longer has (one renamed, say) goes.
+for link in "$skills_dir"/*; do
+  if [ -L "$link" ] && [ ! -e "$link" ]; then
+    case "$(readlink "$link")" in
+      "$repo"/claude/skills/*)
+        rm "$link"
+        echo "Removed the old $(basename "$link") skill from $skills_dir."
+        ;;
+    esac
+  fi
+done
 # Quoted, as Claude runs the command through a shell.
 command="\"$repo/bin/floatterm-claude-hook\""
 events="SessionStart UserPromptSubmit Notification PostToolUse Stop SessionEnd"
