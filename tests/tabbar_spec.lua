@@ -354,6 +354,61 @@ describe("tab bar", function()
       assert.truthy(vim.tbl_contains({ "purple", "cyan", "orange", "yellow" }, marks.colour "waiting on Sam a"))
     end)
 
+    local function press(text)
+      api.nvim_feedkeys(api.nvim_replace_termcodes(text, true, false, true), "x", false)
+    end
+
+    it("d in the bar marks the selected tab done, and again takes it off", function()
+      local buf = H.sleep_tab { label = "api" }
+      tabbar.enter()
+      press "d"
+      assert.equals("done", ft.record(buf).mark)
+      assert.truthy(vim.tbl_contains(tabbar.hint_lines(), "d      not done"))
+      press "d"
+      assert.is_nil(ft.record(buf).mark)
+    end)
+
+    it("t then a key puts that label on, t t takes it off, listing them while it waits", function()
+      local buf = H.sleep_tab { label = "api" }
+      tabbar.enter()
+      local listed
+      local real = vim.fn.getcharstr
+      H.stub(vim.fn, "getcharstr", function()
+        listed = tabbar.hint_lines()
+        return real()
+      end)
+      press "tr"
+      assert.equals("review", ft.record(buf).mark)
+      for _, line in ipairs { "t d    done", "t r    review", "t b    blocked", "t p    parked", "t e    your own label" } do
+        assert.truthy(vim.tbl_contains(listed, line), line)
+      end
+      -- Back to the usual keys after.
+      assert.truthy(vim.tbl_contains(tabbar.hint_lines(), "t      put a label on it"))
+      press "tt"
+      assert.is_nil(ft.record(buf).mark)
+    end)
+
+    it("t e asks for your own label and offers it next time", function()
+      H.stub(marks, "path", H.tmpdir "marks" .. "/marks.json")
+      local buf = H.sleep_tab { label = "api" }
+      tabbar.enter()
+      H.answer_input "waiting on Sam"
+      press "te"
+      assert.equals("waiting on Sam", ft.record(buf).mark)
+      assert.same({ "waiting on Sam" }, marks.recent())
+      assert.same({ "waiting on Sam" }, marks.complete "wait")
+      assert.same({}, marks.complete "zz")
+    end)
+
+    it("takes its labels and keys from the settings", function()
+      settings.set("marks", { { key = "s", word = "shipped", colour = "green" } })
+      local buf = H.sleep_tab { label = "api" }
+      tabbar.enter()
+      press "ts"
+      assert.equals("shipped", ft.record(buf).mark)
+      assert.equals("green", marks.colour "shipped")
+    end)
+
     it("goes after the emoji along the top", function()
       settings.set("tabbar", "top")
       local buf = H.sleep_tab { label = "shell" }

@@ -43,6 +43,8 @@ local selected = nil
 local numbers = nil
 -- The popup beside the selected tab saying what the keys do (defined below redraw).
 local update_hint, close_hint
+-- True while `t` waits for its second key, so the popup lists the labels.
+local choosing_mark = false
 local timer = nil
 local busy = false
 -- How many times `ps` has been started. For tests and debugging.
@@ -893,6 +895,17 @@ local function hint_rows(record, width)
   table.insert(keys, { move, "move earlier / later" })
   local asks = record.kind == "claude" or M.is_running(record)
   table.insert(keys, { "x", asks and "close (asks first)" or "close" })
+  table.insert(keys, { "d", record.mark == "done" and "not done" or "mark done" })
+  table.insert(keys, { "t", "put a label on it" })
+  if choosing_mark then
+    -- `t` is waiting for its second key: the labels instead.
+    keys = {}
+    for _, mark in ipairs(require("floatterm.marks").labels()) do
+      table.insert(keys, { "t " .. mark.key, mark.word })
+    end
+    table.insert(keys, { "t e", "your own label" })
+    table.insert(keys, { "t t", record.mark and "take the label off" or "no label" })
+  end
   for _, key in ipairs(keys) do
     table.insert(rows, { { string.format("%-7s", key[1]), "FloatTermHintKey" }, { key[2], nil } })
   end
@@ -1179,6 +1192,42 @@ function M.map_bar_keys(buf)
   end
   map("x", close_selected, "tab bar close tab")
   map("r", rename_selected, "tab bar rename tab")
+  -- d: done, or not; t then a key: a label (lua/floatterm/marks).
+  map("d", function()
+    local record = selected_record()
+    if record and record.kind ~= "group" then
+      require("floatterm.marks").toggle_done(record.buf)
+      M.redraw()
+    end
+  end, "tab bar mark the tab done, or not")
+  map("t", function()
+    local record = selected_record()
+    if not record or record.kind == "group" then
+      return
+    end
+    local marks = require "floatterm.marks"
+    choosing_mark = true
+    update_hint()
+    vim.cmd.redraw()
+    local ok, key = pcall(vim.fn.getcharstr)
+    choosing_mark = false
+    update_hint()
+    if not ok then
+      return
+    end
+    if key == "t" then
+      marks.set(record.buf, nil)
+    elseif key == "e" then
+      marks.ask(record.buf)
+    else
+      for _, mark in ipairs(marks.labels()) do
+        if mark.key == key then
+          marks.set(record.buf, mark.word)
+        end
+      end
+    end
+    M.redraw()
+  end, "tab bar put a label on the tab")
   -- Only does something when the popup offers it (a command too long to show).
   map("c", function()
     local record = selected_record()
