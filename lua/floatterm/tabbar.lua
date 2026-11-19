@@ -242,6 +242,10 @@ local function vertical_tab(record, row)
   if require("floatterm.notes").has_notes(record) then
     table.insert(second, { " ✎", nil })
   end
+  -- A file Claude offered is waiting (lua/floatterm/remote).
+  if #require("floatterm.remote").waiting(record) > 0 then
+    table.insert(second, { " 📄", nil })
+  end
   table.insert(second, { " · " .. name, "FloatTermWorking" })
   -- A tab marked done (lua/floatterm/marks) in the dim colour all over.
   local marks = require "floatterm.marks"
@@ -365,6 +369,9 @@ local function horizontal_tab(record, level, cap, row)
       table.insert(chunks, { " · ", "FloatTermWorking" })
     end
     table.insert(chunks, part)
+  end
+  if #require("floatterm.remote").waiting(record) > 0 then
+    table.insert(chunks, 2, { " 📄", nil })
   end
   if require("floatterm.notes").has_notes(record) then
     table.insert(chunks, 2, { " ✎", nil })
@@ -1574,6 +1581,7 @@ function M.setup()
   set_up = true
   require("floatterm.groups").setup()
   require("floatterm.emoji").setup()
+  require("floatterm.remote").setup()
 
   local group = api.nvim_create_augroup("floatterm_tabbar", { clear = true })
   local keys_added = false

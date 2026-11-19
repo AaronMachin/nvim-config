@@ -1,0 +1,70 @@
+#!/bin/bash
+# Opens a tab from the floatterm tab this runs in (see lua/floatterm/remote.lua), in the
+# background: the tab shows in the bar and nothing takes the focus. The floatterm skill
+# (claude/skills/floatterm) tells Claude how to use it.
+#
+#   floatterm-tab new [--under] [--claude <prompt>] [--label <name>] [--cwd <dir>]
+#
+#   --under            put it under this tab (as g in the tab bar would)
+#   --claude <prompt>  start Claude in it with this first prompt; a shell without
+#   --label <name>     name it (as r would)
+#   --cwd <dir>        start it in another folder (a worktree, say); this tab's own
+#                      folder by default
+#
+# Prints the new tab's id. Outside a floatterm tab it says so and exits 1.
+
+fail() {
+  echo "floatterm-tab: $1" >&2
+  exit 1
+}
+
+[ "$1" = "new" ] || fail "usage: floatterm-tab new [--under] [--claude <prompt>] [--label <name>] [--cwd <dir>]"
+shift
+under=false
+claude=""
+label=""
+cwd=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --under) under=true ;;
+    --claude) claude=${2-}; shift ;;
+    --label) label=${2-}; shift ;;
+    --cwd) cwd=${2-}; shift ;;
+    *) fail "don't know $1" ;;
+  esac
+  shift
+done
+if [ -n "$cwd" ]; then
+  [ -d "$cwd" ] || fail "no folder at $cwd"
+  cwd=$(cd "$cwd" && pwd -P)
+fi
+
+if [ -z "$NVIM" ] || [ -z "$FLOATTERM_TAB_ID" ] || [ -n "${FLOATTERM_TAB_ID//[0-9]/}" ]; then
+  fail "not running in a floatterm tab, so there's no tab bar to open it in"
+fi
+
+# The options as JSON, through python so the prompt needs no escaping by hand.
+opts=$(UNDER=$under CLAUDE=$claude LABEL=$label CWD=$cwd python3 -I -c '
+import json, os
+print(json.dumps({"under": os.environ["UNDER"] == "true", "claude": os.environ["CLAUDE"],
+                  "label": os.environ["LABEL"] or None, "cwd": os.environ["CWD"] or None}))') ||
+  fail "couldn't put the options together"
+# A file, so nothing in the prompt can break the call.
+file=$(mktemp "${TMPDIR:-/tmp}/floatterm-tab.XXXXXX") || fail "couldn't make a temporary file"
+trap 'rm -f "$file"' EXIT
+printf '%s' "$opts" >"$file"
+
+out=$(mktemp "${TMPDIR:-/tmp}/floatterm-tab-out.XXXXXX") || fail "couldn't make a temporary file"
+trap 'rm -f "$file" "$out"' EXIT
+expr="luaeval('(function(a) local ok, m = pcall(require, \"floatterm.remote\") if not ok then return \"\" end local f = io.open(a[2]) local opts = f and f:read(\"*a\") or \"{}\" if f then f:close() end local ok2, id = pcall(m.open_tab, a[1], opts) return ok2 and id or \"\" end)(_A)', ['$FLOATTERM_TAB_ID', '$file'])"
+nvim --clean --headless --server "$NVIM" --remote-expr "$expr" >"$out" 2>/dev/null &
+pid=$!
+(sleep 5 && kill "$pid") 2>/dev/null &
+watchdog=$!
+wait "$pid" 2>/dev/null
+kill "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
+
+id=$(cat "$out")
+[ -n "$id" ] || fail "nvim didn't open the tab (an nvim started before this script existed needs restarting)"
+printf '%s\n' "$id"

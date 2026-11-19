@@ -1,0 +1,58 @@
+#!/bin/bash
+# Offers a file to look at from the floatterm tab this runs in (see
+# lua/floatterm/remote.lua), instead of opening it in nvim behind your back. The tab
+# gets 📄 in the bar and a pop-up shows when you're in that tab: Open in nvim, Preview
+# here, Copy full path, Don't open. The floatterm skill (claude/skills/floatterm) tells
+# Claude to use it.
+#
+#   floatterm-offer <file>
+#
+# Waits up to 10 seconds for your choice and prints it: opened, previewed, copied, not
+# opened, or "still waiting" if you haven't been to the tab yet. Outside a floatterm tab
+# it prints the file's full path and exits 1, so it can be given another way.
+
+fail() {
+  echo "floatterm-offer: $1" >&2
+  exit 1
+}
+
+[ $# -eq 1 ] || fail "give one file: floatterm-offer <file>"
+[ -f "$1" ] || fail "no file at $1"
+path=$(cd "$(dirname "$1")" && printf '%s/%s' "$(pwd -P)" "$(basename "$1")")
+
+if [ -z "$NVIM" ] || [ -z "$FLOATTERM_TAB_ID" ] || [ -n "${FLOATTERM_TAB_ID//[0-9]/}" ]; then
+  printf '%s\n' "$path"
+  fail "not running in a floatterm tab, so it couldn't be offered: give the user the path above"
+fi
+
+# One call to nvim, given up on after 3 seconds.
+ask() {
+  local out
+  out=$(mktemp "${TMPDIR:-/tmp}/floatterm-offer.XXXXXX") || return 1
+  nvim --clean --headless --server "$NVIM" --remote-expr "$1" >"$out" 2>/dev/null &
+  local pid=$!
+  (sleep 3 && kill "$pid") 2>/dev/null &
+  local watchdog=$!
+  wait "$pid" 2>/dev/null
+  kill "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  cat "$out"
+  rm -f "$out"
+}
+
+quoted=${path//\'/\'\'}
+id=$(ask "luaeval('(function(a) local ok, m = pcall(require, \"floatterm.remote\") if not ok then return \"\" end local ok2, id = pcall(m.offer, a[1], a[2]) return ok2 and id or \"\" end)(_A)', ['$FLOATTERM_TAB_ID', '$quoted'])")
+if [ -z "$id" ]; then
+  printf '%s\n' "$path"
+  fail "nvim didn't take the offer (an nvim started before this script existed needs restarting): give the user the path above"
+fi
+
+for _ in $(seq 1 20); do
+  result=$(ask "luaeval('require(\"floatterm.remote\").result(_A)', '$id')")
+  if [ -n "$result" ]; then
+    printf '%s\n' "$result"
+    exit 0
+  fi
+  sleep 0.5
+done
+echo "still waiting"
