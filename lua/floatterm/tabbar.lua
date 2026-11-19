@@ -353,6 +353,10 @@ local function horizontal_tab(record, level, cap, row)
   if row.folded then
     table.insert(chunks, 2, { (record.kind == "group" and " · " or " ▸") .. row.folded, "FloatTermWorking" })
   end
+  local glyph = require("floatterm.emoji").glyph(record)
+  if glyph then
+    table.insert(chunks, 1, { glyph .. " ", nil })
+  end
   -- A child follows its parent, marked as one.
   if row.depth > 0 then
     table.insert(chunks, 1, { "└ ", "FloatTermTree" })

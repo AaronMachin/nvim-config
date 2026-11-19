@@ -107,7 +107,7 @@ describe("tab groups", function()
       end)
       local messages = H.capture_notify()
       groups.pick_parent(child)
-      assert.truthy(line:find("1 $ lead", 1, true), line)
+      assert.truthy(line:find "1 %S+ %$ lead", line)
       assert.is_nil(ft.record(child).parent_uid)
       assert.is_not_nil(H.notified(messages, "no tab numbered 7"))
     end)
@@ -175,9 +175,9 @@ describe("tab groups", function()
       settings.set("tabbar", "top")
       local line = draw()[1]
       local lead_at = line:find("$ lead", 1, true)
-      local a_at = line:find("│ └ $ a", 1, true)
-      local b_at = line:find("│ ▶ └ $ b", 1, true)
-      local solo_at = line:find("│ $ solo", 1, true)
+      local a_at = line:find "│ └ %S+ %$ a"
+      local b_at = line:find "│ ▶ └ %S+ %$ b"
+      local solo_at = line:find "│ %S+ %$ solo"
       assert.truthy(lead_at and a_at and b_at and solo_at, line)
       assert.is_true(lead_at < a_at and a_at < b_at and b_at < solo_at)
     end)

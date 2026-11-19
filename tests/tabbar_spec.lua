@@ -309,13 +309,15 @@ describe("tab bar", function()
       local lines = draw()
       assert.equals(1, #lines)
       assert.truthy(lines[1]:find("$ shell", 1, true))
-      assert.truthy(lines[1]:find(" │ ▶ ✓ done", 1, true))
+      assert.truthy(lines[1]:find(" │ ▶ " .. ft.record(ft.tabs()[2].buf).emoji .. " ✓ done", 1, true))
+      -- Each tab starts with its emoji.
+      assert.truthy(lines[1]:find(ft.record(ft.tabs()[1].buf).emoji .. " $ shell", 1, true))
       assert.truthy(lines[1]:find("Tidy", 1, true))
       assert.truthy(lines[1]:find("api", 1, true))
     end)
 
     it("shortens summaries, then scrolls to keep the current tab in view", function()
-      for i = 1, 6 do
+      for i = 1, 4 do
         claude_tab { label = "t" .. i, status = "working", title = "✳ " .. string.rep("summary" .. i .. " ", 8) }
       end
       local line = draw()[1]
@@ -324,7 +326,7 @@ describe("tab bar", function()
       assert.is_nil(line:find("t1", 1, true))
       assert.truthy(line:find("…", 1, true))
 
-      for i = 7, 20 do
+      for i = 5, 20 do
         claude_tab { label = "t" .. i, status = "working", title = "✳ task" }
       end
       line = draw()[1]
