@@ -35,6 +35,9 @@ M.defaults = {
   -- The most of the tab bar's height (or the notes pane's) the summary takes, less
   -- when it's short.
   claude_notes_share = 0.65,
+  -- What leads each tab in the tab bar (lua/floatterm/emoji): "emoji", or "symbols"
+  -- (a coloured shape) for a terminal whose font draws emoji badly.
+  tab_icons = "emoji",
   -- The labels the tab bar's t puts on a tab (lua/floatterm/marks): the second key,
   -- the word and its colour (green, blue, red, grey, purple, yellow, cyan, orange).
   -- Only done greys the tab out.

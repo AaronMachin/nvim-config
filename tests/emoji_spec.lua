@@ -68,12 +68,91 @@ describe("emoji", function()
     end
   end)
 
-  it("keeps an emoji from outside the set while no other tab has it", function()
+  it("gives a tab whose emoji isn't in the set any more a new one", function()
     local buf = H.sleep_tab()
     tabbar.redraw()
-    ft.update(buf, { emoji = "🔐" })
+    ft.update(buf, { emoji = "🪁" })
     emoji.ensure_all()
-    assert.equals("🔐", ft.record(buf).emoji)
+    assert.truthy(vim.tbl_contains(emoji.SET, ft.record(buf).emoji))
+  end)
+
+  it("has none of the emoji fonts from before 2019 lack", function()
+    for _, newer in ipairs { "🪁", "🪐", "🧊", "🪴", "🦩", "🪀", "🛼", "🪄", "🪸", "🦦", "🦥" } do
+      assert.is_false(vim.tbl_contains(emoji.SET, newer), newer)
+    end
+  end)
+
+  describe("as symbols", function()
+    local settings
+
+    before_each(function()
+      settings = require "floatterm.settings"
+      settings.set("tab_icons", "symbols")
+    end)
+
+    it("shows a coloured shape two columns wide, never two the same", function()
+      local bufs = {}
+      for i = 1, 12 do
+        bufs[i] = H.sleep_tab()
+      end
+      emoji.ensure_all()
+      local seen = {}
+      for _, buf in ipairs(bufs) do
+        local icon = emoji.icon(ft.record(buf))
+        assert.equals(2, vim.fn.strdisplaywidth(icon[1]))
+        assert.truthy(icon[2]:match "^FloatTermIcon%d$", icon[2])
+        local look = icon[1] .. icon[2]
+        assert.is_nil(seen[look], look)
+        seen[look] = true
+      end
+    end)
+
+    it("draws it in the tab bar in place of the emoji", function()
+      local buf = H.sleep_tab { label = "api" }
+      tabbar.redraw()
+      local shape = emoji.glyph(ft.record(buf))
+      assert.truthy(vim.tbl_contains(emoji.SHAPES, shape))
+      assert.truthy(tabbar.lines()[1]:find(shape, 1, true), tabbar.lines()[1])
+    end)
+  end)
+
+  describe("the font check on Linux", function()
+    local messages
+
+    before_each(function()
+      messages = H.capture_notify()
+      H.stub(emoji, "is_linux", function()
+        return true
+      end)
+    end)
+
+    local function fonts(list)
+      H.stub(emoji, "list_fonts", function(callback)
+        callback(list)
+      end)
+    end
+
+    it("says so when there's no colour emoji font", function()
+      fonts "DejaVu Sans Mono\nNoto Emoji\n"
+      emoji.check_font()
+      H.flush(20)
+      assert.is_not_nil(H.notified(messages, "no colour emoji font"))
+    end)
+
+    it("says nothing with one, with symbols, or off Linux", function()
+      fonts "DejaVu Sans Mono\nNoto Color Emoji\n"
+      emoji.check_font()
+      require("floatterm.settings").set("tab_icons", "symbols")
+      fonts "DejaVu Sans Mono\n"
+      emoji.check_font()
+      require("floatterm.settings").set("tab_icons", "emoji")
+      H.stub(emoji, "is_linux", function()
+        return false
+      end)
+      emoji.check_font()
+      H.flush(20)
+      assert.is_nil(H.notified(messages, "no colour emoji font"))
+    end)
   end)
 
   it("has no repeats in the set, and each is one character two columns wide", function()

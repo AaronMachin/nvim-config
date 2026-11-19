@@ -242,7 +242,8 @@ local function vertical_tab(record, row)
     second = { { M.is_running(record) and "running" or "idle", "FloatTermWorking" } }
   end
   -- Its emoji (lua/floatterm/emoji) leads the first line.
-  table.insert(first, 1, { require("floatterm.emoji").glyph(record) .. " ", nil })
+  local icon = require("floatterm.emoji").icon(record)
+  table.insert(first, 1, { icon[1] .. " ", icon[2] })
   -- Your notes have something in them (lua/floatterm/notes), after the state.
   if require("floatterm.notes").has_notes(record) then
     table.insert(second, { " ✎", nil })
@@ -388,7 +389,7 @@ local function horizontal_tab(record, level, cap, row)
   if row.folded then
     table.insert(chunks, 2, { (record.kind == "group" and " · " or " ▸") .. row.folded, "FloatTermWorking" })
   end
-  local glyph = require("floatterm.emoji").glyph(record)
+  local icon = require("floatterm.emoji").icon(record)
   -- Its mark (lua/floatterm/marks) after the emoji, and a tab marked done dim.
   local marks = require "floatterm.marks"
   if marks.is_done(record) then
@@ -401,8 +402,8 @@ local function horizontal_tab(record, level, cap, row)
     table.insert(chunks, 1, { " ", nil })
     table.insert(chunks, 1, mark)
   end
-  if glyph then
-    table.insert(chunks, 1, { glyph .. " ", nil })
+  if icon then
+    table.insert(chunks, 1, { icon[1] .. " ", icon[2] })
   end
   -- A child follows its parent, marked as one.
   if row.depth > 0 then

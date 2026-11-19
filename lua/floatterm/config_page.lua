@@ -53,6 +53,12 @@ local ROWS = {
     },
     note = "Tab: large/small",
   },
+  {
+    key = "tab_icons",
+    label = "Tab icons",
+    choices = { { "emoji", "emoji" }, { "symbols", "symbols" } },
+    note = "symbols where emoji show badly",
+  },
   { key = "hints", label = "Key hints", choices = { { true, "shown" }, { false, "hidden" } } },
   { key = "reopen_tabs", label = "Reopen tabs on start", choices = { { true, "yes" }, { false, "no" } } },
   { key = "bookmark", label = "Claude bookmark", choices = { { true, "shown" }, { false, "hidden" } } },

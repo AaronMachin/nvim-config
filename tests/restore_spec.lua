@@ -94,7 +94,7 @@ describe("restore", function()
           title = "✳ Fixing login",
           status = "done",
           last_prompt = "fix it",
-          emoji = "🔐",
+          emoji = "🐙",
           mark = "waiting on Sam",
         },
       },
@@ -107,7 +107,7 @@ describe("restore", function()
     assert.equals("20261001-nnnn", shell.note_id)
     assert.is_true(shell.notes_on)
     assert.equals("🦊", shell.emoji)
-    assert.equals("🔐", claude.emoji)
+    assert.equals("🐙", claude.emoji)
     assert.equals("parked", shell.mark)
     assert.equals("waiting on Sam", claude.mark)
     assert.equals("claude", claude.kind)
