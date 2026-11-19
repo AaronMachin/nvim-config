@@ -47,7 +47,9 @@ if [ -z "$id" ]; then
   fail "nvim didn't take the offer (an nvim started before this script existed needs restarting): give the user the path above"
 fi
 
-for _ in $(seq 1 20); do
+# 10 seconds by the clock: each check starts an nvim of its own, which takes a while.
+deadline=$((SECONDS + ${FLOATTERM_OFFER_WAIT:-10}))
+while [ "$SECONDS" -lt "$deadline" ]; do
   result=$(ask "luaeval('require(\"floatterm.remote\").result(_A)', '$id')")
   if [ -n "$result" ]; then
     printf '%s\n' "$result"

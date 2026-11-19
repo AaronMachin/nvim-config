@@ -220,6 +220,16 @@ describe("floatterm remote", function()
       assert.equals("not opened", vim.trim(result.stdout))
     end)
 
+    it("floatterm-offer stops waiting after 10 seconds by the clock", function()
+      local buf = H.sleep_tab { label = "api" }
+      api.nvim_set_current_win(ft.window())
+      local started = vim.uv.now()
+      local result = run("floatterm-offer", { file }, buf)
+      assert.equals("still waiting", vim.trim(result.stdout))
+      -- The last check can start just before the 10 seconds are up.
+      assert.is_true(vim.uv.now() - started < 16000, tostring(vim.uv.now() - started))
+    end)
+
     it("floatterm-offer gives the path back outside a floatterm tab", function()
       local result = run("floatterm-offer", { file }, nil)
       assert.equals(1, result.code)
