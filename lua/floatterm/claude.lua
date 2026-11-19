@@ -38,12 +38,27 @@
 
 local M = {}
 
--- Background agents and commands a Stop event lists as not finished yet.
-local FINISHED = { completed = true, failed = true, killed = true, stopped = true, cancelled = true, done = true }
+-- Background agents and commands a Stop event lists as still running. The list only
+-- holds work in flight, but its status names aren't documented, so only one with no
+-- status or one that reads as running counts: anything else is taken as finished, so
+-- a tab can't be left saying working for ever.
+local function still_running(status)
+  if status == nil then
+    return true
+  end
+  status = type(status) == "string" and status:lower() or ""
+  for _, word in ipairs { "run", "pend", "progress", "start", "queue", "wait", "active" } do
+    if status:find(word, 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
 local function running_in_background(event)
   local running = 0
   for _, task in ipairs(type(event.background_tasks) == "table" and event.background_tasks or {}) do
-    if type(task) == "table" and not FINISHED[task.status] then
+    if type(task) == "table" and still_running(task.status) then
       running = running + 1
     end
   end

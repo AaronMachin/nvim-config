@@ -188,6 +188,19 @@ describe("claude hooks", function()
       assert.equals("done", record.status)
     end)
 
+    it("Stop: done when the background work listed has a status that isn't running", function()
+      H.stub(require "floatterm.claude_notes", "on_stop", function() end)
+      claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "go" })
+      claude.apply(record, {
+        hook_event_name = "Stop",
+        background_tasks = { { id = "t1", status = "success" }, { id = "t2", status = "errored" } },
+      })
+      assert.equals("done", record.status)
+      claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "go" })
+      claude.apply(record, { hook_event_name = "Stop", background_tasks = { { id = "t3" } } })
+      assert.equals("working", record.status)
+    end)
+
     it("SessionEnd makes it a shell tab again, keeping start_ref only over a /clear", function()
       claude.apply(record, { hook_event_name = "SessionStart", session_id = "a", transcript_path = "/t" })
       claude.apply(record, { hook_event_name = "UserPromptSubmit", prompt = "hi" })
