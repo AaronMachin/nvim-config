@@ -1,0 +1,70 @@
+#!/bin/bash
+# Makes Linux draw emoji in colour in the terminal, for the tab bar's emoji (see
+# lua/floatterm/emoji.lua). Emoji showing as outlines or blanks means the terminal got
+# them from a black-and-white font, or from none.
+#
+#   fix-emoji-font [--undo]
+#
+# Checks Noto Color Emoji is installed, then writes
+# ~/.config/fontconfig/conf.d/60-floatterm-color-emoji.conf, which adds it as a
+# fallback after every font and leaves out the black-and-white emoji fonts (Noto Emoji,
+# Symbola), and rebuilds the font cache. --undo removes that file. Quit the terminal
+# app completely and open it again afterwards.
+
+set -euo pipefail
+
+conf_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig/conf.d"
+conf="$conf_dir/60-floatterm-color-emoji.conf"
+
+if [ "${FIX_EMOJI_SYSTEM:-$(uname -s)}" != "Linux" ]; then
+  echo "Only needed on Linux: macOS draws emoji in colour already."
+  exit 0
+fi
+
+if [ "${1-}" = "--undo" ]; then
+  rm -f "$conf"
+  fc-cache -f >/dev/null 2>&1 || true
+  echo "Removed $conf. Quit the terminal app and open it again."
+  exit 0
+fi
+
+if ! command -v fc-list >/dev/null 2>&1; then
+  echo "fontconfig (fc-list) isn't installed, so this can't check the fonts." >&2
+  exit 1
+fi
+
+if ! fc-list : family | grep -qi "noto color emoji"; then
+  cat >&2 <<'MISSING'
+Noto Color Emoji isn't installed, so emoji have no colour font to come from.
+  Bazzite (and other Fedora Atomic):  rpm-ostree install google-noto-color-emoji-fonts, then reboot
+  Fedora:                             sudo dnf install google-noto-color-emoji-fonts
+  Debian or Ubuntu:                   sudo apt install fonts-noto-color-emoji
+Then run this again. Or set Tab icons to symbols in :FloatTermSettings.
+MISSING
+  exit 1
+fi
+
+mkdir -p "$conf_dir"
+cat >"$conf" <<'CONF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- From ~/.config/nvim/bin/fix-emoji-font: emoji in colour. Its undo option removes this file. -->
+<fontconfig>
+  <!-- Black-and-white emoji fonts left out, so emoji come from the colour one. -->
+  <selectfont>
+    <rejectfont>
+      <pattern><patelt name="family"><string>Noto Emoji</string></patelt></pattern>
+      <pattern><patelt name="family"><string>Symbola</string></patelt></pattern>
+    </rejectfont>
+  </selectfont>
+  <!-- Noto Color Emoji after every font's own, for what that font hasn't got. -->
+  <match target="pattern">
+    <edit name="family" mode="append"><string>Noto Color Emoji</string></edit>
+  </match>
+</fontconfig>
+CONF
+fc-cache -f >/dev/null 2>&1 || true
+
+echo "Wrote $conf and rebuilt the font cache."
+echo "Quit the terminal app completely (Warp: Quit from its menu, not just the window) and open it again."
+echo "If emoji still show as outlines in Warp, set Tab icons to symbols in :FloatTermSettings."

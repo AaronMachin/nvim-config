@@ -77,7 +77,7 @@ describe("emoji", function()
   end)
 
   it("has none of the emoji fonts from before 2019 lack", function()
-    for _, newer in ipairs { "🪁", "🪐", "🧊", "🪴", "🦩", "🪀", "🛼", "🪄", "🪸", "🦦", "🦥" } do
+    for _, newer in ipairs { "🪁", "🪐", "🧊", "🪴", "🦩", "🪀", "🛼", "🪄", "🪸", "🦦", "🦥", "⭐", "⚡", "⛵" } do
       assert.is_false(vim.tbl_contains(emoji.SET, newer), newer)
     end
   end)
@@ -113,6 +113,45 @@ describe("emoji", function()
       local shape = emoji.glyph(ft.record(buf))
       assert.truthy(vim.tbl_contains(emoji.SHAPES, shape))
       assert.truthy(tabbar.lines()[1]:find(shape, 1, true), tabbar.lines()[1])
+    end)
+  end)
+
+  describe("bin/fix-emoji-font", function()
+    -- Runs the script as on Linux, with fc-list answering `families`.
+    local function run(families, args, config)
+      local bin = H.fake_bin()
+      H.script(bin, "fc-list", ("printf '%%s' %q"):format(families))
+      H.script(bin, "fc-cache", "exit 0")
+      config = config or H.tmpdir "config"
+      local result = vim
+        .system(vim.list_extend({ H.config .. "/bin/fix-emoji-font" }, args or {}), {
+          text = true,
+          env = { FIX_EMOJI_SYSTEM = "Linux", XDG_CONFIG_HOME = config, PATH = bin .. ":" .. vim.env.PATH },
+        })
+        :wait()
+      return result, config .. "/fontconfig/conf.d/60-floatterm-color-emoji.conf", config
+    end
+
+    it("adds Noto Color Emoji as a fallback, leaving out black-and-white emoji fonts", function()
+      local result, conf, config = run "DejaVu Sans Mono\nNoto Color Emoji\n"
+      assert.equals(0, result.code, result.stderr)
+      local text = H.read(conf)
+      assert.truthy(text:find("<string>Noto Color Emoji</string>", 1, true))
+      assert.truthy(text:find("<string>Noto Emoji</string>", 1, true))
+      -- Valid XML: no double dash inside a comment.
+      for comment in text:gmatch "<!%-%-(.-)%-%->" do
+        assert.is_nil(comment:find("--", 1, true), comment)
+      end
+      result = run("DejaVu Sans Mono\nNoto Color Emoji\n", { "--undo" }, config)
+      assert.equals(0, result.code)
+      assert.is_false(H.exists(conf))
+    end)
+
+    it("says how to install the font when it's missing, writing nothing", function()
+      local result, conf = run "DejaVu Sans Mono\n"
+      assert.equals(1, result.code)
+      assert.truthy(result.stderr:find("rpm-ostree install google-noto-color-emoji-fonts", 1, true))
+      assert.is_false(H.exists(conf))
     end)
   end)
 

@@ -21,15 +21,16 @@ local M = {}
 local api = vim.api
 
 -- Easy to tell apart at a glance, each one character two columns wide (no variation
--- selectors, none that terminals show narrow), and all from Unicode 11 (2018) or
--- earlier, so fonts a few years old have them.
+-- selectors, none that terminals show narrow), all from Unicode 11 (2018) or earlier,
+-- so fonts a few years old have them, and none of the older symbols (⭐ ⚡ ⛵) that
+-- text fonts such as DejaVu also draw, in outline.
 M.SET = {
   "🦊", "🐙", "🌵", "🍋", "🐝", "🦉", "🍄", "🌻", "🐢", "🦀", "🍉", "🎈", "🧩", "🎲",
   "🚀", "🌙", "🔥", "🌊", "🍀", "🐳", "🦋", "🍒", "🥑", "🎯", "🧲", "🔔", "🌈", "🐌",
-  "🦔", "🍩", "🎸", "🛶", "🏮", "🧸", "🦜", "⭐", "⚡", "🦄", "🦢", "🐧", "🐸", "🐼",
+  "🦔", "🍩", "🎸", "🛶", "🏮", "🧸", "🦜", "🦄", "🦢", "🐧", "🐸", "🐼",
   "🐨", "🦁", "🐯", "🦒", "🦓", "🐘", "🦚", "🐞", "🦞", "🐠", "🍓", "🍍", "🥝", "🥕",
   "🌽", "🍕", "🧁", "🍪", "🥨", "🧀", "🍇", "🍑", "🎺", "🎻", "🥁", "🎨", "🎭", "🛸",
-  "🚂", "⛵", "🏰", "🗿", "💎", "🔮", "🧭", "🏆", "🌋", "🌷", "🌲", "🍁", "🌀", "🧿",
+  "🚂", "🏰", "🗿", "💎", "🔮", "🧭", "🏆", "🌋", "🌷", "🌲", "🍁", "🌀", "🧿",
   "🐉",
 }
 
