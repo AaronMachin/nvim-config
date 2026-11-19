@@ -23,11 +23,13 @@ trap 'rm -f "$out"' EXIT
 expr="luaeval('(function(id) local ok, m = pcall(require, \"floatterm.notes\") if not ok then return \"\" end local ok2, path = pcall(m.path_for_tab, id) return ok2 and path or \"\" end)(_A)', '$FLOATTERM_TAB_ID')"
 nvim --clean --headless --server "$NVIM" --remote-expr "$expr" >"$out" 2>/dev/null &
 pid=$!
-(sleep 3 && kill "$pid" 2>/dev/null) &
+(sleep 3 && kill "$pid") 2>/dev/null &
 watchdog=$!
-wait "$pid"
+wait "$pid" 2>/dev/null
+# Quietly: bash reports a stopped job on stderr otherwise.
 kill "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
 
 path=$(cat "$out")
-[ -n "$path" ] || fail "nvim didn't give a notes file for this tab"
+[ -n "$path" ] || fail "nvim didn't give a notes file for this tab (an nvim started before this script existed needs restarting)"
 printf '%s\n' "$path"
