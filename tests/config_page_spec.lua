@@ -68,11 +68,13 @@ describe("settings page", function()
       "Claude's summary",
       "Claude's notes model",
       "Summary's share",
+      "Tab labels",
     } do
       assert.is_not_nil(row(label), "no row for " .. label)
     end
     assert.truthy(row("Docked sizes"):find("large 90%", 1, true))
     assert.truthy(row("Notes size"):find("35%", 1, true))
+    assert.truthy(row("Tab labels"):find("d done · r review · b blocked · p parked", 1, true))
   end)
 
   it("reads Claude's notes switched off from before as Claude's summary off", function()

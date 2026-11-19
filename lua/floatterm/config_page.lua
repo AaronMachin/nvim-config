@@ -84,6 +84,20 @@ local ROWS = {
     label = "Summary's share",
     number = { min = 30, max = 80, step = 5, percent = true },
   },
+  -- Shown, not changed here: a list is edited in the settings file.
+  {
+    key = "marks",
+    label = "Tab labels",
+    shown = function(value)
+      return table.concat(
+        vim.tbl_map(function(mark)
+          return mark.key .. " " .. mark.word
+        end, value),
+        " · "
+      )
+    end,
+    note = "edit in floatterm-settings.json",
+  },
 }
 
 local page = nil
@@ -131,6 +145,8 @@ local function render_row(row, selected)
     end
   elseif row.number then
     add(row.number.percent and (percent(value) .. "%") or tostring(value), "FloatTermSettingsValue", selected)
+  elseif row.shown then
+    add(row.shown(value), "FloatTermSettingsValue", false)
   else
     for i, part in ipairs(row.parts) do
       add(part.name .. " " .. percent(value[part.name]) .. "%", "FloatTermSettingsValue", selected and page.part == i)
@@ -245,6 +261,9 @@ end
 -- ←/→ (direction -1 or 1): the next choice that way, stopping at the ends, or a step.
 local function change(direction)
   local row = ROWS[selected_row()]
+  if row.shown then
+    return
+  end
   if row.choices then
     local i = choice_index(row, settings.get(row.key)) + direction
     if i >= 1 and i <= #row.choices then
@@ -260,6 +279,9 @@ end
 -- Enter: the next choice, wrapping round, or a prompt for a number.
 local function enter()
   local row = ROWS[selected_row()]
+  if row.shown then
+    return
+  end
   if row.choices then
     local i = choice_index(row, settings.get(row.key)) % #row.choices + 1
     settings.set(row.key, row.choices[i][1])

@@ -84,6 +84,7 @@ local function set_highlights()
   api.nvim_set_hl(0, "FloatTermNumber", { link = "IncSearch", default = true })
   api.nvim_set_hl(0, "FloatTermHintKey", { link = "Function", default = true })
   api.nvim_set_hl(0, "FloatTermHintBorder", { link = "Function", default = true })
+  require("floatterm.marks").set_highlights()
 end
 set_highlights()
 
@@ -240,6 +241,22 @@ local function vertical_tab(record, row)
     table.insert(second, { " ✎", nil })
   end
   table.insert(second, { " · " .. name, "FloatTermWorking" })
+  -- A tab marked done (lua/floatterm/marks) in the dim colour all over.
+  local marks = require "floatterm.marks"
+  if marks.is_done(record) then
+    for _, line in ipairs { first, second } do
+      for i = 2, #line do
+        line[i] = { line[i][1], "FloatTermMarkedDone" }
+      end
+    end
+    second[1] = { second[1][1], "FloatTermMarkedDone" }
+  end
+  -- Its mark leads the second line.
+  local mark = marks.chunk(record)
+  if mark then
+    table.insert(second, 1, { " ", nil })
+    table.insert(second, 1, mark)
+  end
   local lines = { first, second }
   if row.folded then
     table.insert(lines[1], { " ▸" .. row.folded, "FloatTermWorking" })
@@ -354,6 +371,18 @@ local function horizontal_tab(record, level, cap, row)
     table.insert(chunks, 2, { (record.kind == "group" and " · " or " ▸") .. row.folded, "FloatTermWorking" })
   end
   local glyph = require("floatterm.emoji").glyph(record)
+  -- Its mark (lua/floatterm/marks) after the emoji, and a tab marked done dim.
+  local marks = require "floatterm.marks"
+  if marks.is_done(record) then
+    for i, chunk in ipairs(chunks) do
+      chunks[i] = { chunk[1], "FloatTermMarkedDone" }
+    end
+  end
+  local mark = marks.chunk(record)
+  if mark then
+    table.insert(chunks, 1, { " ", nil })
+    table.insert(chunks, 1, mark)
+  end
   if glyph then
     table.insert(chunks, 1, { glyph .. " ", nil })
   end

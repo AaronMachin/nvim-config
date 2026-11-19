@@ -300,6 +300,69 @@ describe("tab bar", function()
     end)
   end)
 
+  describe("marks", function()
+    local marks
+
+    before_each(function()
+      marks = require "floatterm.marks"
+    end)
+
+    -- The highlight on `text` in line `row` of the bar (0-based), or nil.
+    local function highlight_on(row, text)
+      local buf = api.nvim_win_get_buf(tabbar.window())
+      local line = api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
+      local col = line:find(text, 1, true) - 1
+      local found
+      for _, mark in ipairs(api.nvim_buf_get_extmarks(buf, -1, { row, 0 }, { row, -1 }, { details = true })) do
+        local d = mark[4]
+        if mark[3] <= col and (d.end_col or 0) > col and d.priority == 200 then
+          found = d.hl_group
+        end
+      end
+      return found
+    end
+
+    it("leads the second line with the label in its colour", function()
+      local buf = H.sleep_tab { label = "api" }
+      marks.set(buf, "review")
+      local lines = draw()
+      assert.truthy(lines[2]:find "^▎  review  idle" or lines[2]:find "^▎  review  running", lines[2])
+      assert.equals("FloatTermMarkBlue", highlight_on(1, "review"))
+    end)
+
+    it("greys a tab marked done all over, both lines kept", function()
+      H.sleep_tab { label = "shell" }
+      local buf = claude_tab { label = "api", status = "working", title = "✳ Fixing login" }
+      marks.toggle_done(buf)
+      local lines = draw()
+      assert.equals(5, #lines)
+      assert.truthy(lines[5]:find "^▎  done  ◌ working", lines[5])
+      assert.equals("FloatTermMarkGreen", highlight_on(4, "done"))
+      assert.equals("FloatTermMarkedDone", highlight_on(3, "Fixing login"))
+      assert.equals("FloatTermMarkedDone", highlight_on(4, "working"))
+      -- The other tab isn't greyed.
+      assert.is_not.equals("FloatTermMarkedDone", highlight_on(1, "idle") or highlight_on(1, "running"))
+      marks.toggle_done(buf)
+      assert.is_nil(ft.record(buf).mark)
+    end)
+
+    it("gives your own label the same colour every time, cut to 16 characters", function()
+      local buf = H.sleep_tab { label = "api" }
+      marks.set(buf, "waiting on Sam and the infra team")
+      assert.equals("waiting on Sam a", ft.record(buf).mark)
+      assert.equals(marks.colour "waiting on Sam a", marks.colour "waiting on Sam a")
+      assert.truthy(vim.tbl_contains({ "purple", "cyan", "orange", "yellow" }, marks.colour "waiting on Sam a"))
+    end)
+
+    it("goes after the emoji along the top", function()
+      settings.set("tabbar", "top")
+      local buf = H.sleep_tab { label = "shell" }
+      marks.set(buf, "parked")
+      local line = draw()[1]
+      assert.truthy(line:find(ft.record(buf).emoji .. "  parked  $ shell", 1, true), line)
+    end)
+  end)
+
   describe("Claude's summary under the bar", function()
     local notes
 
