@@ -157,10 +157,14 @@ describe("notes", function()
     end
 
     it("prints the tab's notes file, making the note when it has none", function()
-      local server = vim.fn.serverstart()
+      -- This nvim's own server, or one on a free local port without one.
+      local started = vim.v.servername == "" and vim.fn.serverstart "127.0.0.1:0" or nil
+      local server = started or vim.v.servername
       local buf = H.sleep_tab { kind = "claude", label = "api" }
       local result = notes_path { NVIM = server, FLOATTERM_TAB_ID = tostring(ft.record(buf).id) }
-      vim.fn.serverstop(server)
+      if started then
+        vim.fn.serverstop(started)
+      end
       assert.equals(0, result.code, result.stderr)
       local path = vim.trim(result.stdout)
       H.wait(1000, function()
