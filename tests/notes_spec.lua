@@ -142,6 +142,53 @@ describe("notes", function()
     end)
   end)
 
+  describe("Ctrl+Enter to the terminal", function()
+    local sent
+
+    before_each(function()
+      sent = {}
+      H.stub(vim.api, "nvim_chan_send", function(channel, text)
+        table.insert(sent, { channel = channel, text = text })
+      end)
+    end)
+
+    local function in_notes(lines)
+      local buf = H.sleep_tab { label = "api" }
+      notes.toggle_focus()
+      local mine = api.nvim_win_get_buf(notes.state().mine)
+      api.nvim_buf_set_lines(mine, 0, -1, false, lines)
+      vim.cmd "stopinsert"
+      return buf
+    end
+
+    it("types the line under the cursor into the tab's terminal, unsent, and goes there", function()
+      local buf = in_notes { "# api", "also check the top bar", "" }
+      api.nvim_win_set_cursor(0, { 2, 0 })
+      notes.send_to_terminal()
+      assert.equals(1, #sent)
+      assert.equals(vim.bo[buf].channel, sent[1].channel)
+      assert.equals("\27[200~also check the top bar\27[201~", sent[1].text)
+      assert.equals(ft.window(), api.nvim_get_current_win())
+      -- Still in your notes.
+      assert.truthy(vim.tbl_contains(lines_of(notes.paths(ft.record(buf)).mine), "also check the top bar"))
+    end)
+
+    it("types the lines selected as one paste", function()
+      in_notes { "# api", "first", "second", "" }
+      api.nvim_win_set_cursor(0, { 2, 0 })
+      vim.cmd "normal! Vj"
+      notes.send_to_terminal()
+      assert.equals("\27[200~first\nsecond\27[201~", sent[1].text)
+    end)
+
+    it("sends nothing from an empty line", function()
+      in_notes { "# api", "" }
+      api.nvim_win_set_cursor(0, { 2, 0 })
+      notes.send_to_terminal()
+      assert.equals(0, #sent)
+    end)
+  end)
+
   describe("captures", function()
     it("Y in a terminal tab adds the selection, wrapped lines joined, with where it came from", function()
       local _, buf = ft.new_tab({ "sh", "-c", "echo first; echo second; sleep 300" }, { label = "logs" })

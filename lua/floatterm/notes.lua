@@ -884,6 +884,36 @@ function M.toggle_focus()
   end
 end
 
+-- Ctrl+Enter in your notes: the line under the cursor, or the lines selected, typed
+-- into the tab's terminal (Claude's prompt, or the shell's) without pressing Enter,
+-- then back to the terminal, typing. Sent as a bracketed paste, so lines after the
+-- first don't send it. The text stays in your notes.
+function M.send_to_terminal()
+  local record = target_record()
+  local buf = api.nvim_get_current_buf()
+  local mode = api.nvim_get_mode().mode
+  local lines
+  if mode:match "^[vV\22]" then
+    lines = vim.fn.getregion(vim.fn.getpos "v", vim.fn.getpos ".", { type = mode })
+    api.nvim_feedkeys(vim.keycode "<Esc>", "nx", false)
+  else
+    local row = api.nvim_win_get_cursor(0)[1]
+    lines = api.nvim_buf_get_lines(buf, row - 1, row, false)
+  end
+  local text = vim.trim(table.concat(lines, "\n"))
+  if not record or text == "" then
+    return
+  end
+  local channel = vim.bo[record.buf].channel
+  if not channel or channel == 0 then
+    vim.notify("floatterm: that tab's terminal has ended", vim.log.levels.INFO)
+    return
+  end
+  api.nvim_chan_send(channel, "\27[200~" .. text .. "\27[201~")
+  vim.cmd "stopinsert"
+  M.back()
+end
+
 -- Ctrl+\ from the notes does what it does from the terminal: hides the float, or in
 -- the split goes to the code.
 function M.hide_float()
@@ -1307,6 +1337,7 @@ set_up_buffer = function(buf, editable)
   map("n", "<Esc>", on_escape, "notes back to the terminal (shown over it)")
   if editable then
     map(modes, "<C-S-o>", M.read_claude, "notes read all of Claude's notes")
+    map({ "n", "i", "x" }, "<C-CR>", M.send_to_terminal, "notes type this into the terminal, unsent")
     api.nvim_create_autocmd({ "BufLeave", "FocusLost", "BufHidden", "WinLeave" }, {
       buffer = buf,
       callback = function(args)
