@@ -35,6 +35,7 @@ Restore and the remembered placement need a fresh nvim per case, so those specs 
 | `claude_notes_spec.lua` | drawing the dossier (widths, columns, folds, no emoji, a narrow column), a summary for every Claude tab, its plain-text copy, older shapes, redaction, reading the turn, the run's guards, the badges, bar, pills, headings, link and plan colours as highlight spans, WORKSTREAMS and part of |
 | `notes_spec.lua` | paths, opening and closing (Ctrl+Shift+e, twice to close), Ctrl+Enter to the terminal, the notes path script and skill link, captures without opening (into notes another nvim changed too), notes never deleted for you, Claude's sheet reloading, Claude's pop-up, the dossier in the pane and the large view (Tab, Enter, `d`/`t`, clicks, fold state per note), sharing with another nvim, the picker's filtering |
 | `overview_spec.lua` | the Claude overview's order, row text, preview and the link Ctrl+o opens, children grouped under their parent |
+| `remote_spec.lua` | files offered in a pop-up (straight away or on arriving, each choice, several in turn, keys ignored as it appears), tabs opened from a tab (under, beside, Claude with its prompt), bin/floatterm-offer and bin/floatterm-tab |
 | `restore_spec.lua` | saved sets per nvim, saving, migration, the picker, another nvim's tabs, the 10-set cap |
 | `grepmask_spec.lua`, `testrun_spec.lua`, `git_spec.lua` (gitkeys, pins), `phpstan_spec.lua`, `dbkeys_spec.lua`, `laravel_spec.lua`, `worktrees_spec.lua`, `localenv_spec.lua` | the smaller modules |
 
