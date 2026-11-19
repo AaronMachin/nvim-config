@@ -56,7 +56,7 @@ local ROWS = {
   {
     key = "tab_icons",
     label = "Tab icons",
-    choices = { { "emoji", "emoji" }, { "symbols", "symbols" } },
+    choices = { { "emoji", "emoji" }, { "symbols", "symbols" }, { "off", "off" } },
     note = "symbols where emoji show badly",
   },
   { key = "hints", label = "Key hints", choices = { { true, "shown" }, { false, "hidden" } } },

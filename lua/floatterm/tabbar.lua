@@ -243,7 +243,9 @@ local function vertical_tab(record, row)
   end
   -- Its emoji (lua/floatterm/emoji) leads the first line.
   local icon = require("floatterm.emoji").icon(record)
-  table.insert(first, 1, { icon[1] .. " ", icon[2] })
+  if icon then
+    table.insert(first, 1, { icon[1] .. " ", icon[2] })
+  end
   -- Your notes have something in them (lua/floatterm/notes), after the state.
   if require("floatterm.notes").has_notes(record) then
     table.insert(second, { " ✎", nil })

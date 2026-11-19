@@ -94,9 +94,9 @@ function M.random(except)
 end
 
 -- What the tab bar shows for a tab: { text, hl } two columns wide, its emoji or with
--- symbols its shape in its colour. nil for a group heading.
+-- symbols its shape in its colour. nil for a group heading, or with tab icons off.
 function M.icon(record)
-  if record.kind == "group" then
+  if record.kind == "group" or require("floatterm.settings").get "tab_icons" == "off" then
     return nil
   end
   local i = index_of[record.emoji or ""]
@@ -154,7 +154,7 @@ end
 
 -- On Linux, with emoji showing, says so when no colour emoji font is installed.
 function M.check_font()
-  if not M.is_linux() or symbols() then
+  if not M.is_linux() or require("floatterm.settings").get "tab_icons" ~= "emoji" then
     return
   end
   M.list_fonts(function(families)

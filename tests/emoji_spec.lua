@@ -82,6 +82,15 @@ describe("emoji", function()
     end
   end)
 
+  it("shows none with tab icons off", function()
+    require("floatterm.settings").set("tab_icons", "off")
+    local buf = H.sleep_tab { label = "api" }
+    tabbar.redraw()
+    assert.is_nil(emoji.icon(ft.record(buf)))
+    assert.truthy(tabbar.lines()[1]:find "^▶ %S", tabbar.lines()[1])
+    assert.is_nil(tabbar.lines()[1]:find(ft.record(buf).emoji, 1, true))
+  end)
+
   describe("as symbols", function()
     local settings
 
