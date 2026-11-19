@@ -148,6 +148,8 @@ local WORTH = { done = 1, in_progress = 0.5 }
 -- Partial cells of the bar, by eighths.
 local EIGHTHS = { "", "▏", "▎", "▍", "▌", "▋", "▊", "▉" }
 local DEFAULT_WIDTH = 60
+-- Narrower than this, the summary is drawn for a narrow column (the tab bar is 28).
+M.NARROW = 36
 -- More tasks than this and the done ones fold into one line, so the current and next
 -- ones stay in view. Still more, and the last ones become a count, so no more than
 -- this many task rows show.
@@ -542,6 +544,11 @@ function M.render(data, opts)
   opts = opts or {}
   data = M.normalise(data)
   local width = math.max(10, opts.width or DEFAULT_WIDTH)
+  -- Narrower than M.NARROW (the tab bar's column): the notes beside links and tasks go
+  -- but for the task in progress or blocked, whose note gets a line of its own; the
+  -- progress bar gets a line of its own across the width; hashtags go to the end; and
+  -- decisions and details aren't shown (the large float has them).
+  local narrow = width < M.NARROW
   local open = opts.open or {}
   local lines, highlights, targets = {}, {}, {}
   local function add(line)
@@ -611,9 +618,14 @@ function M.render(data, opts)
   if #data.tasks > 0 then
     local percent, done, total = M.progress(data.tasks)
     local colour = bar_colour(data.tasks, opts.status)
-    bar = bar_pieces(percent, math.max(6, math.min(16, math.floor(width / 6))), colour)
-    table.insert(bar, { (" %d%%"):format(percent), "FloatTermNotesPercent" .. colour })
-    table.insert(bar, { (" %d/%d"):format(done, total), "Comment" })
+    if narrow then
+      bar = bar_pieces(percent, math.max(6, width - 7), colour)
+      table.insert(bar, { (" %d%%"):format(percent), "FloatTermNotesPercent" .. colour })
+    else
+      bar = bar_pieces(percent, math.max(6, math.min(16, math.floor(width / 6))), colour)
+      table.insert(bar, { (" %d%%"):format(percent), "FloatTermNotesPercent" .. colour })
+      table.insert(bar, { (" %d/%d"):format(done, total), "Comment" })
+    end
   end
   local bar_width = 0
   for _, piece in ipairs(bar or {}) do
@@ -639,7 +651,7 @@ function M.render(data, opts)
   end
   local room = width - 1 - (bar and (bar_width + GAP) or 0)
   -- Too narrow for both: the bar goes on a line of its own.
-  local own_line = bar and #pieces > 0 and room < 12
+  local own_line = bar and #pieces > 0 and (room < 12 or narrow)
   if own_line then
     room = width - 1
   end
@@ -663,9 +675,12 @@ function M.render(data, opts)
     add(compose(fitted))
   end
   if bar then
-    add(compose(bar, string.rep(" ", math.max(1, width - bar_width))))
+    add(compose(bar, narrow and " " or string.rep(" ", math.max(1, width - bar_width))))
   end
-  if #data.hashtags > 0 then
+  local function hashtags()
+    if #data.hashtags == 0 then
+      return
+    end
     -- Pills, each in the next of a few colours, until the line is full.
     local fitted, used = {}, 1
     for i, tag in ipairs(data.hashtags) do
@@ -684,6 +699,9 @@ function M.render(data, opts)
       add(compose(fitted))
     end
   end
+  if not narrow then
+    hashtags()
+  end
 
   -- Two columns, the right one starting in one column for every row. Each row is
   -- { prefix, prefix_group, left, left_group, right, right_group, refs }; the left side
@@ -691,6 +709,28 @@ function M.render(data, opts)
   -- refs, PR and ticket references in the right side stand out.
   local function columns(rows)
     local avail = width - 2
+    if narrow then
+      local out = {}
+      for _, r in ipairs(rows) do
+        local line, row = "  ", #lines
+        if r.prefix ~= "" then
+          highlight(row, #line, #line + #r.prefix, r.prefix_group)
+          line = line .. r.prefix
+        end
+        local left = fit(r.left, math.max(1, avail - width_of(r.prefix)))
+        highlight(row, #line, #line + #left, r.left_group)
+        line = line .. left
+        add(line)
+        table.insert(out, { row = row, col = 2 + #r.prefix, end_col = 2 + #r.prefix + #left })
+        if r.keep_note and r.right ~= "" then
+          local note = fit(r.right, math.max(1, avail - 2))
+          local note_row = #lines
+          highlight(note_row, 4, 4 + #note, r.right_group)
+          add("    " .. note)
+        end
+      end
+      return out
+    end
     local widest_left, widest_right = 0, 0
     for _, r in ipairs(rows) do
       widest_left = math.max(widest_left, width_of(r.prefix .. r.left))
@@ -877,10 +917,19 @@ function M.render(data, opts)
           right = right,
           right_group = blocked and "FloatTermNotesNoteAmber" or "Comment",
           refs = true,
+          keep_note = blocked or task.state == "in_progress",
         })
       end
     end
     columns(rows)
+  end
+
+  if narrow then
+    if #data.hashtags > 0 then
+      add ""
+    end
+    hashtags()
+    return lines, highlights, targets
   end
 
   -- Decisions and details: a row of buttons, the key on each in a badge, folded by

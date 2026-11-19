@@ -291,13 +291,13 @@ describe("Claude's notes", function()
     it("wraps long decisions under their dash, and puts the toggles on a line each when narrow", function()
       local data = dossier()
       data.decisions = { "Use one Cognito pool per region rather than one per partner" }
-      local lines = cn.render(data, { width = 30, open = { decisions = true } })
+      local lines = cn.render(data, { width = 36, open = { decisions = true } })
       assert.is_not_nil(find_line(lines, "^  ▾ Decisions 1  d $"))
       assert.is_not_nil(find_line(lines, "^  ▸ Details 5  t $"))
       local i = find_line(lines, "^  %- Use one")
       assert.truthy(lines[i + 1]:find "^    %S")
       for _, line in ipairs(lines) do
-        assert.is_true(vim.fn.strdisplaywidth(line) <= 30, line)
+        assert.is_true(vim.fn.strdisplaywidth(line) <= 36, line)
       end
     end)
 
@@ -475,6 +475,61 @@ describe("Claude's notes", function()
         end, targets)[1]
         assert.same({ "p1", 1 }, { tab.uid, tab.line })
       end)
+    end)
+  end)
+
+  describe("render in a narrow column", function()
+    local function dossier()
+      return {
+        title = "SD-494 · Console partner sign-in",
+        now = "Task 2: model and factory",
+        hashtags = { "auth", "cognito" },
+        tasks = {
+          task("Schema and migration", "done"),
+          task("Model and factory", "in_progress", "writing the factory states"),
+          task("Controller", "pending", "later"),
+        },
+        links = { { title = "PR #231 cloud/console", url = "https://x/pull/231", note = "Opened" } },
+        decisions = { "Use Cognito groups" },
+      }
+    end
+
+    local function text(lines)
+      return table.concat(lines, "\n")
+    end
+
+    it("never draws wider than the column", function()
+      for _, width in ipairs { 28, 36, 50 } do
+        for _, line in ipairs((cn.render(dossier(), { width = width, status = "working" }))) do
+          assert.is_true(vim.fn.strdisplaywidth(line) <= width, ("%d: %s"):format(width, line))
+        end
+      end
+    end)
+
+    it("keeps only the in-progress task's note, on its own line, below 36 columns", function()
+      local lines = cn.render(dossier(), { width = 28, status = "working" })
+      local all = text(lines)
+      assert.is_nil(all:find("Opened", 1, true))
+      assert.is_nil(all:find("later", 1, true))
+      for i, line in ipairs(lines) do
+        if line:find("Model and factory", 1, true) then
+          assert.truthy(lines[i + 1]:find "^    writing", lines[i + 1])
+        end
+      end
+      -- No decisions button; hashtags come last.
+      assert.is_nil(all:find("Decisions", 1, true))
+      assert.truthy(lines[#lines]:find("#auth", 1, true), lines[#lines])
+      -- The progress bar has a line of its own.
+      local bar_line = vim.tbl_filter(function(line)
+        return line:find("%%")
+      end, lines)[1]
+      assert.is_nil(bar_line:find("working", 1, true))
+    end)
+
+    it("draws as the pane does from 36 columns up", function()
+      local all = text((cn.render(dossier(), { width = 50, status = "working" })))
+      assert.truthy(all:find("Opened", 1, true))
+      assert.truthy(all:find("Decisions", 1, true))
     end)
   end)
 
