@@ -739,7 +739,18 @@ exit "$(cat "$L/code")"]]):format(log)
       end
     end)
 
-    it("writes nothing when notes are switched off while it runs", function()
+    it("writes a summary for a Claude tab whose notes pane is closed, giving it a note", function()
+      local record = claude_tab { notes_on = vim.NIL, note_id = vim.NIL }
+      cn.refresh(record)
+      local note_id = ft.record(record.buf).note_id
+      assert.truthy(note_id)
+      idle(record)
+      assert.is_true(H.exists(notes.dir() .. "/" .. note_id .. ".claude.md"))
+      -- Your own notes file isn't made for it.
+      assert.is_false(H.exists(notes.dir() .. "/" .. note_id .. ".md"))
+    end)
+
+    it("still writes when the notes pane is closed while it runs", function()
       H.write(log .. "/delay", "1")
       local record = claude_tab()
       cn.refresh(record)
@@ -748,7 +759,7 @@ exit "$(cat "$L/code")"]]):format(log)
       end)
       ft.update(record.buf, { notes_on = false })
       idle(record)
-      assert.is_false(H.exists(notes.dir() .. "/20261029-test.claude.md"))
+      assert.is_true(H.exists(notes.dir() .. "/20261029-test.claude.md"))
     end)
 
     it("writes nothing to a note the tab moved off while it ran", function()

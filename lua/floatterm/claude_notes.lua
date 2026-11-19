@@ -2,8 +2,8 @@
 -- small, cheap Claude (the claude_notes_model setting, haiku by default) after each
 -- turn. The claude_notes setting switches it off everywhere.
 --
--- When the tab's Claude finishes a turn (the Stop hook, through lua/floatterm/claude)
--- and the tab has notes on, the turn is read from Claude Code's transcript (from the
+-- When the tab's Claude finishes a turn (the Stop hook, through lua/floatterm/claude),
+-- whether or not its notes pane is open (it gets a note_id then if it has none), the turn is read from Claude Code's transcript (from the
 -- last prompt to the end: the prompt, Claude's replies, and the tools it ran with a
 -- short result) and given to `claude -p` with the current dossier, which it rewrites as
 -- data in a fixed schema: a title, what it's doing now, hashtags, the plan's tasks, the
@@ -1003,7 +1003,6 @@ end
 local function wanted(record)
   return record
     and record.kind == "claude"
-    and record.notes_on
     and record.note_id
     and record.transcript_path
     and settings.get "claude_notes"
@@ -1587,7 +1586,20 @@ local function start(record, delay)
 end
 
 -- Called by lua/floatterm/claude when a tab's Claude finishes a turn.
+-- A Claude tab gets a note_id the first time it needs one, whether or not its notes
+-- pane is open: every Claude tab gets a summary.
+local function with_note(record)
+  if record and record.kind == "claude" and not record.note_id and record.buf then
+    local ok, notes = pcall(require, "floatterm.notes")
+    if ok then
+      return notes.ensure_id(record)
+    end
+  end
+  return record
+end
+
 function M.on_stop(record)
+  record = with_note(record)
   if keeps(record) then
     start(record, SETTLE_MS)
   end
@@ -1596,13 +1608,11 @@ end
 -- Rewrites the notes from the latest turn now. `record` defaults to the tab showing.
 function M.refresh(record)
   local floatterm = require "floatterm"
-  record = record or floatterm.record(floatterm.current_buf() or -1)
+  record = with_note(record or floatterm.record(floatterm.current_buf() or -1))
   if not settings.get "claude_notes" then
     vim.notify("Claude's notes: switched off in the settings", vim.log.levels.WARN)
   elseif not (record and record.kind == "claude") then
     vim.notify("Claude's notes: not a Claude tab", vim.log.levels.WARN)
-  elseif not (record.notes_on and record.note_id) then
-    vim.notify("Claude's notes: this tab's notes are off", vim.log.levels.WARN)
   elseif not record.transcript_path then
     vim.notify("Claude's notes: no conversation yet", vim.log.levels.WARN)
   elseif not keeps(record) then

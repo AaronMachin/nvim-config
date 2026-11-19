@@ -185,6 +185,15 @@ local function target_record()
   return ft.record(ft.current_buf() or -1)
 end
 
+-- Gives a tab a note_id if it has none, without making any file. Returns the record as
+-- it is now.
+function M.ensure_id(record)
+  if not record.note_id then
+    floatterm().update(record.buf, { note_id = new_id() })
+  end
+  return floatterm().record(record.buf) or record
+end
+
 -- Gives a tab a note_id if it has none, and its file with a heading if there's none.
 local function ensure_note(record)
   if not record.note_id then
