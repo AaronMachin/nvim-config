@@ -30,7 +30,9 @@ local function marks()
   for _, record in ipairs(floatterm and floatterm.tabs() or {}) do
     if record.kind == "claude" then
       local state = tabbar.state(record)
-      table.insert(found, { state.glyph, state.hl })
+      -- ◆ for decisions waiting for you in the decisions mod's pane.
+      local waiting = require("floatterm.decisions").count(record) > 0 and "◆" or ""
+      table.insert(found, { state.glyph .. waiting, state.hl })
     end
   end
   return found

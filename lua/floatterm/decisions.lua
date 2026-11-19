@@ -12,7 +12,7 @@
 local M = {}
 
 -- A field so tests can point it somewhere else.
-M.root = vim.fn.expand "~/.claude/decisions"
+M.root = vim.g.floatterm_decisions_dir or vim.fn.expand "~/.claude/decisions"
 M.CHECK_MS = 2000
 
 -- By file path: { key (its size and time), session, waiting }.

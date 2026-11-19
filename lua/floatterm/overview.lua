@@ -43,6 +43,11 @@ local function state_text(record)
   if record.status and record.status_since then
     text = text .. " · " .. elapsed(record.status_since)
   end
+  -- Decisions waiting for you in the decisions mod's pane (lua/floatterm/decisions).
+  local waiting = require("floatterm.decisions").count(record)
+  if waiting > 0 then
+    text = text .. " ◆ " .. waiting
+  end
   return text, state.hl
 end
 

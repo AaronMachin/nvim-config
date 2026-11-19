@@ -300,6 +300,33 @@ describe("tab bar", function()
     end)
   end)
 
+  describe("decisions waiting", function()
+    before_each(function()
+      local decisions = require "floatterm.decisions"
+      local root = H.tmpdir "decisions"
+      H.stub(decisions, "root", root)
+      H.stub(decisions, "CHECK_MS", 0)
+      decisions.reset()
+      for i = 1, 2 do
+        H.write(root .. "/app/d" .. i .. ".json", vim.json.encode { session = "s1", state = "open", section = "needs-you" })
+      end
+    end)
+
+    it("shows ◆ and how many after the state, in the needs-you colour", function()
+      claude_tab { label = "api", status = "working", session_id = "s1" }
+      claude_tab { label = "other", status = "working", session_id = "s2" }
+      local lines = draw()
+      assert.truthy(lines[2]:find("◌ working · %d+s ◆ 2 · api"), lines[2])
+      assert.is_nil(lines[5]:find("◆", 1, true))
+    end)
+
+    it("shows it along the top too", function()
+      settings.set("tabbar", "top")
+      claude_tab { label = "api", status = "working", session_id = "s1" }
+      assert.truthy(draw()[1]:find("◆ 2", 1, true))
+    end)
+  end)
+
   describe("marks", function()
     local marks
 
@@ -586,6 +613,19 @@ describe("bookmark", function()
     claude_tab {}
     bookmark.redraw()
     assert.equals(" ● ◌ ✳ ", bookmark.text())
+  end)
+
+  it("adds ◆ to a Claude tab with decisions waiting for you", function()
+    local decisions = require "floatterm.decisions"
+    local root = H.tmpdir "decisions"
+    H.stub(decisions, "root", root)
+    H.stub(decisions, "CHECK_MS", 0)
+    decisions.reset()
+    H.write(root .. "/app/d1.json", vim.json.encode { session = "s1", state = "open", section = "needs-you" })
+    claude_tab { status = "working", session_id = "s1" }
+    claude_tab { status = "working", session_id = "s2" }
+    bookmark.redraw()
+    assert.equals(" ◌◆ ◌ ", bookmark.text())
   end)
 
   it("hides with the setting", function()

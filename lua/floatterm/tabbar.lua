@@ -231,6 +231,11 @@ local function vertical_tab(record, row)
     first = { { M.summary(record) or name, nil } }
     local text, hl = state_text(record)
     second = { { text, hl } }
+    -- Decisions waiting for you in the decisions mod's pane (lua/floatterm/decisions).
+    local waiting = require("floatterm.decisions").count(record)
+    if waiting > 0 then
+      table.insert(second, { " ◆ " .. waiting, "FloatTermNeedsYou" })
+    end
   else
     local command, hl = shell_command(record)
     first = { { command, hl } }
@@ -372,6 +377,10 @@ local function horizontal_tab(record, level, cap, row)
   end
   if #require("floatterm.remote").waiting(record) > 0 then
     table.insert(chunks, 2, { " 📄", nil })
+  end
+  local decided = record.kind == "claude" and require("floatterm.decisions").count(record) or 0
+  if decided > 0 then
+    table.insert(chunks, 2, { " ◆ " .. decided, "FloatTermNeedsYou" })
   end
   if require("floatterm.notes").has_notes(record) then
     table.insert(chunks, 2, { " ✎", nil })

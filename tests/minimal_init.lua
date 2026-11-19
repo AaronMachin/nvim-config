@@ -42,6 +42,8 @@ vim.g.nvim_test_proc = proc
 -- folder it was started in.
 vim.g.floatterm_placement_dir = vim.g.floatterm_placement_dir or (proc .. "/placement")
 vim.g.floatterm_tabs_dir = vim.g.floatterm_tabs_dir or (proc .. "/tabs")
+-- Never the real decisions mod's folder (lua/floatterm/decisions).
+vim.g.floatterm_decisions_dir = vim.g.floatterm_decisions_dir or (proc .. "/decisions")
 if not vim.env.NVIM_TEST_CHILD then
   local start = proc .. "/start"
   vim.fn.mkdir(start, "p")
