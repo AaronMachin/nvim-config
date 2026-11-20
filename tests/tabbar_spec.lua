@@ -516,6 +516,61 @@ describe("tab bar", function()
       tabbar.redraw()
       assert.is_nil(tabbar.summary_window())
     end)
+
+    it("keeps the footer when there's no room for everything", function()
+      local lines = { "title", "a", "b", "c", "rule", "hint", "buttons" }
+      local highlights = { { line = 0, col = 0, end_col = 1 }, { line = 2, col = 0, end_col = 1 }, { line = 6, col = 0, end_col = 1 } }
+      local targets = { { kind = "fold", name = "details", line = 6, col = 1, end_col = 4 } }
+      local out, hls, found = tabbar.fit_summary(lines, highlights, targets, 3, 5)
+      assert.same({ "title", "a", "rule", "hint", "buttons" }, out)
+      assert.same({ 0, 4 }, vim.tbl_map(function(h)
+        return h.line
+      end, hls))
+      assert.equals(4, found[1].line)
+    end)
+
+    it("opens the full summary with s in the bar", function()
+      local buf = summarised("api", "SD-1 · Login fix")
+      tabbar.redraw()
+      tabbar.enter()
+      local bar = api.nvim_get_current_win()
+      vim.api.nvim_feedkeys("s", "x", false)
+      local popup = api.nvim_get_current_win()
+      assert.is_not.equals(bar, popup)
+      assert.truthy(table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("Login fix", 1, true))
+      vim.api.nvim_feedkeys("q", "x", false)
+      assert.equals(bar, api.nvim_get_current_win())
+      assert.truthy(ft.record(buf))
+    end)
+
+    it("opens the full summary at a section when its button is clicked", function()
+      local buf = claude_tab { label = "api", status = "working", note_id = "20261120-click" }
+      H.write(
+        notes.paths(ft.record(buf)).claude_json,
+        vim.json.encode { title = "Login fix", decisions = { "Use groups" }, details = { "Branch x" } }
+      )
+      tabbar.redraw()
+      local win = tabbar.summary_window()
+      local lines = api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false)
+      local row = #lines - 1
+      local col = lines[#lines]:find("Details", 1, true)
+      local pos = api.nvim_win_get_position(win)
+      -- Inside the border (one row down, one column across), 1-based as Neovim gives it.
+      H.stub(vim.fn, "getmousepos", function()
+        return {
+          screenrow = pos[1] + 1 + row + 1,
+          screencol = pos[2] + 1 + vim.fn.strdisplaywidth(lines[#lines]:sub(1, col)) + 1,
+          winid = 0,
+          line = 0,
+          column = 0,
+        }
+      end)
+      vim.api.nvim_feedkeys(vim.keycode "<LeftMouse>", "x", false)
+      H.wait(1000, function()
+        return table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("Branch x", 1, true)
+      end, "the full view didn't open at Details")
+      assert.is_true(notes.folds("20261120-click").details)
+    end)
   end)
 
   describe("along the top", function()

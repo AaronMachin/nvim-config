@@ -533,6 +533,66 @@ describe("Claude's notes", function()
     end)
   end)
 
+  describe("render for the box under the tab bar", function()
+    local function dossier()
+      return {
+        title = "SD-494 · Console partner sign-in for every partner in the estate",
+        summary = "Partners sign in to the console with their own provider. Model done, controller next.",
+        now = "Task 2: model and factory states for the partner sign-in",
+        hashtags = { "auth", "cognito" },
+        tasks = {
+          task("Schema and migration", "done", "merged"),
+          task("Model and factory", "in_progress", "writing the factory states"),
+        },
+        links = { { title = "PR #231 cloud/console", url = "https://x/pull/231", note = "Opened" } },
+        decisions = { "Use Cognito groups", "One pool" },
+        details = { "Branch SD-494" },
+      }
+    end
+
+    it("is narrow at any width, wraps instead of cutting, and has no hashtags", function()
+      for _, width in ipairs { 26, 38, 60 } do
+        local lines = cn.render(dossier(), { width = width, status = "working", box = true })
+        local all = table.concat(lines, "\n")
+        for _, line in ipairs(lines) do
+          assert.is_true(vim.fn.strdisplaywidth(line) <= width, ("%d: %s"):format(width, line))
+        end
+        assert.is_nil(all:find("auth", 1, true), all)
+        assert.is_nil(all:find("merged", 1, true), all)
+      end
+      local lines = cn.render(dossier(), { width = 38, status = "working", box = true })
+      assert.same({
+        "  SD-494  Console partner sign-in for",
+        "   every partner in the estate",
+        " Partners sign in to the console with",
+        " their own provider. Model done,",
+        " controller next.",
+        "  ◌ working  Task 2: model and factory",
+        "   states for the partner sign-in",
+      }, vim.list_slice(lines, 1, 7))
+      -- A short link note stays on the right.
+      assert.truthy(table.concat(lines, "\n"):find("cloud/console%s+Opened"))
+    end)
+
+    it("ends in the full view hint and a button each for decisions and details", function()
+      local lines, _, targets, footer = cn.render(dossier(), { width = 38, status = "working", box = true })
+      assert.equals(3, footer)
+      assert.equals(" " .. cn.BOX_HINT[1], lines[#lines - 1])
+      assert.equals("  ▸ Decisions 2    ▸ Details 1 ", lines[#lines])
+      local folds = vim.tbl_filter(function(t)
+        return t.kind == "fold"
+      end, targets)
+      assert.same({ "decisions", "details" }, vim.tbl_map(function(t)
+        return t.name
+      end, folds))
+      assert.equals(#lines - 1, folds[1].line)
+      -- Too narrow for both on a line: a line each, and the short hint.
+      lines, _, _, footer = cn.render(dossier(), { width = 26, status = "working", box = true })
+      assert.equals(4, footer)
+      assert.equals(" s: full view", lines[#lines - 2])
+    end)
+  end)
+
   describe("the plain-text copy", function()
     it("writes the same content with the URLs out, for Claude in the tab", function()
       local text = cn.text {

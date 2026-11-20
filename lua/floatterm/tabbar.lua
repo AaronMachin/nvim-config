@@ -486,6 +486,8 @@ local summary_ns = api.nvim_create_namespace "floatterm_tabbar_summary"
 -- The summary last drawn, so the once-a-second redraws only read its files again when
 -- they changed: { key, lines, highlights }.
 local summary_cache = nil
+-- What the box shows now: { record, targets }, for a click on it.
+local summary_shown = nil
 
 local function close_summary()
   if summary_win and api.nvim_win_is_valid(summary_win) then
@@ -504,8 +506,9 @@ local function close()
   close_hint()
 end
 
--- Claude's summary of `record`'s session drawn `width` cells wide: its lines and
--- highlights, or nil for a tab without one (a shell, or a Claude tab before its first
+-- Claude's summary of `record`'s session drawn `width` cells wide for the box: its
+-- lines, highlights, Decisions and Details buttons, and how many rows at the end are
+-- its footer. nil for a tab without one (a shell, or a Claude tab before its first
 -- summary).
 function M.summary_lines(record, width)
   if not (record and record.kind == "claude" and record.note_id) then
@@ -527,10 +530,47 @@ function M.summary_lines(record, width)
     md and md.mtime.sec .. "." .. md.mtime.nsec or "",
   }, "|")
   if not (summary_cache and summary_cache.key == key) then
-    local lines, highlights = notes.claude_preview(record.note_id, width, record)
-    summary_cache = { key = key, lines = lines, highlights = highlights }
+    local lines, highlights, targets, footer = notes.claude_preview(record.note_id, width, record, true)
+    summary_cache = { key = key, lines = lines, highlights = highlights, targets = targets, footer = footer }
   end
-  return summary_cache.lines, summary_cache.highlights
+  local cache = summary_cache
+  return cache.lines, cache.highlights, cache.targets, cache.footer
+end
+
+-- The summary cut to `room` rows: the plan's end goes first, the footer always stays.
+-- Its lines, highlights and buttons.
+function M.fit_summary(lines, highlights, targets, footer, room)
+  if #lines <= room then
+    return lines, highlights, targets
+  end
+  footer = math.min(footer or 0, room)
+  local keep = room - footer
+  local cut = #lines - room
+  local function moved(row)
+    if row < keep then
+      return row
+    elseif row >= #lines - footer then
+      return row - cut
+    end
+  end
+  local out = {}
+  for i = 1, keep do
+    out[i] = lines[i]
+  end
+  for i = #lines - footer + 1, #lines do
+    table.insert(out, lines[i])
+  end
+  local function shift(list)
+    local kept = {}
+    for _, item in ipairs(list or {}) do
+      local row = moved(item.line)
+      if row then
+        table.insert(kept, vim.tbl_extend("force", item, { line = row }))
+      end
+    end
+    return kept
+  end
+  return out, shift(highlights), shift(targets)
 end
 
 -- Draws the summary into `box` (border included), or closes it when `lines` is nil.
@@ -704,12 +744,16 @@ function M.redraw()
   -- Claude's summary takes the bottom of the box, up to the claude_notes_share setting
   -- of it, as long as the tab list keeps at least 3 rows.
   local summary, summary_hl, summary_box
+  summary_shown = nil
   if summary_under_bar() then
     local row = rows_drawn[selected or current]
-    summary, summary_hl = M.summary_lines(row and row.record, box.width - 2)
+    local targets, footer
+    summary, summary_hl, targets, footer = M.summary_lines(row and row.record, box.width - 2)
     if summary then
       local room = math.min(math.floor(box.height * settings.get "claude_notes_share") - 2, box.height - 7)
       if room >= 1 then
+        summary, summary_hl, targets = M.fit_summary(summary, summary_hl, targets, footer, room)
+        summary_shown = { record = row.record, targets = targets }
         local height = math.min(#summary, room) + 2
         summary_box = { row = box.row + box.height - height, col = box.col, width = box.width, height = height }
         box = { row = box.row, col = box.col, width = box.width, height = box.height - height }
@@ -916,6 +960,9 @@ local function hint_rows(record, width)
   table.insert(keys, { "x", asks and "close (asks first)" or "close" })
   table.insert(keys, { "d", record.mark == "done" and "not done" or "mark done" })
   table.insert(keys, { "t", "put a label on it" })
+  if record.kind == "claude" then
+    table.insert(keys, { "s", "all of Claude's summary" })
+  end
   if choosing_mark then
     -- `t` is waiting for its second key: the labels instead.
     keys = {}
@@ -1209,6 +1256,12 @@ function M.map_bar_keys(buf)
       end
     end, "tab bar open tab " .. n)
   end
+  map("s", function()
+    local record = selected_record()
+    if record and record.kind == "claude" then
+      require("floatterm.notes").read_claude { record = record }
+    end
+  end, "tab bar show all of Claude's summary")
   map("x", close_selected, "tab bar close tab")
   map("r", rename_selected, "tab bar rename tab")
   -- d: done, or not; t then a key: a label (lua/floatterm/marks).
@@ -1358,6 +1411,31 @@ local function on_click()
   end
   local pos = vim.fn.getmousepos()
   local row, cell = pos.screenrow - 1, pos.screencol - 1
+  -- On the summary box under the bar: the full view, at the section of a button.
+  if summary_shown and summary_win and api.nvim_win_is_valid(summary_win) and not covered(pos, row, cell) then
+    local config = api.nvim_win_get_config(summary_win)
+    local top, left, bottom, right = float_cells(summary_win, config)
+    if row > top and row < bottom and cell > left and cell < right then
+      local shown = summary_shown
+      local line = row - top - 1
+      local col = #vim.fn.strcharpart(
+        api.nvim_buf_get_lines(summary_buf, line, line + 1, false)[1] or "",
+        0,
+        cell - left - 1
+      )
+      local fold
+      for _, target in ipairs(shown.targets or {}) do
+        if target.kind == "fold" and target.line == line and col >= target.col and col < target.end_col then
+          fold = target.name
+        end
+      end
+      swallow_release = true
+      vim.schedule(function()
+        require("floatterm.notes").read_claude { record = shown.record, fold = fold }
+      end)
+      return ""
+    end
+  end
   local config = api.nvim_win_get_config(bar_win)
   local top, left, bottom, right = float_cells(bar_win, config)
   -- Inside the border, when the bar has one (down the left side).

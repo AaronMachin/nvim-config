@@ -150,6 +150,8 @@ local EIGHTHS = { "", "▏", "▎", "▍", "▌", "▋", "▊", "▉" }
 local DEFAULT_WIDTH = 60
 -- Narrower than this, the summary is drawn for a narrow column (the tab bar is 28).
 M.NARROW = 36
+-- The box under the tab bar says how to open the full view.
+M.BOX_HINT = { "s full view · Ctrl+Shift+o in a tab", "s or Ctrl+Shift+o: full view", "s: full view" }
 -- More tasks than this and the done ones fold into one line, so the current and next
 -- ones stay in view. Still more, and the last ones become a count, so no more than
 -- this many task rows show.
@@ -465,6 +467,22 @@ local function wrap(s, width, first, indent)
   return out
 end
 
+-- As wrap, but no more than `most` lines, the last cut with … when there's more.
+local function wrap_most(s, width, first, indent, most)
+  local out = wrap(s, width, first, indent)
+  if #out > most then
+    local rest = {}
+    for i = most + 1, #out do
+      table.insert(rest, vim.trim(out[i]))
+    end
+    out[most] = fit(out[most] .. " " .. table.concat(rest, " "), width)
+    for i = #out, most + 1, -1 do
+      out[i] = nil
+    end
+  end
+  return out
+end
+
 -- The ticket key a title starts with ("SD-494 · Console sign-in"), and the rest.
 local function split_key(title)
   local key = title:match "^(%u[%u%d]*%-%d+)"
@@ -548,7 +566,14 @@ function M.render(data, opts)
   -- but for the task in progress or blocked, whose note gets a line of its own; the
   -- progress bar gets a line of its own across the width; hashtags go to the end; and
   -- decisions and details aren't shown (the large float has them).
-  local narrow = width < M.NARROW
+  --
+  -- With opts.box (the box under the tab bar, lua/floatterm/tabbar) it's always drawn
+  -- narrow, and the title, the summary and what Claude is doing wrap instead of being
+  -- cut, there are no hashtags, and it ends in a footer: how to open the full view and
+  -- a button each for Decisions and Details. The footer's row count comes back fourth,
+  -- so it can be kept when the box is too short for everything.
+  local box = opts.box
+  local narrow = box or width < M.NARROW
   local open = opts.open or {}
   local lines, highlights, targets = {}, {}, {}
   local function add(line)
@@ -584,7 +609,24 @@ function M.render(data, opts)
 
   -- Header: the ticket key as a badge and the title, the tab this sits under, the state
   -- with what Claude is doing and the bar, the hashtags.
-  if data.title ~= "" then
+  if data.title ~= "" and box then
+    -- Up to two lines, the ticket key's badge on the first.
+    local key, rest = split_key(data.title)
+    local badge = key and (" " .. key .. " ") or "✳ "
+    local first = " " .. badge .. (key and " " or "")
+    local body = key and rest or data.title
+    local wrapped = body ~= "" and wrap_most(body, width, first, "   ", 2) or { " " .. badge }
+    for i, line in ipairs(wrapped) do
+      local row = #lines
+      if i == 1 then
+        highlight(row, 1, 1 + #badge, key and "FloatTermNotesKey" or "Comment")
+        highlight(row, #first, #line, TITLE_HL)
+      else
+        highlight(row, 3, #line, TITLE_HL)
+      end
+      add(line)
+    end
+  elseif data.title ~= "" then
     local key, rest = split_key(data.title)
     local pieces = {}
     if key then
@@ -612,6 +654,12 @@ function M.render(data, opts)
       col = col,
       end_col = col + #name,
     })
+  end
+  -- What the session is about, under the title.
+  if box and data.summary ~= "" then
+    for _, line in ipairs(wrap_most(one_line(data.summary), width, " ", " ", 3)) do
+      add(line)
+    end
   end
 
   local bar = nil
@@ -655,7 +703,27 @@ function M.render(data, opts)
   if own_line then
     room = width - 1
   end
-  if #pieces > 0 then
+  if box and #pieces > 0 then
+    -- The state's badge, then what Claude is doing (or asking) on up to two lines.
+    local badge, said
+    if asking or STATES[opts.status] then
+      badge, said = pieces[1], pieces[2]
+    else
+      said = pieces[1]
+    end
+    local first = " " .. (badge and (badge[1] .. " ") or "")
+    local wrapped = said and wrap_most(vim.trim(said[1]), width, first, "   ", 2) or { " " .. badge[1] }
+    for i, line in ipairs(wrapped) do
+      local row = #lines
+      if i == 1 and badge then
+        highlight(row, 1, 1 + #badge[1], badge[2])
+      end
+      if said then
+        highlight(row, i == 1 and #first or 3, #line, said[2])
+      end
+      add(line)
+    end
+  elseif #pieces > 0 then
     local fitted = {}
     local used = 0
     for _, piece in ipairs(pieces) do
@@ -717,9 +785,17 @@ function M.render(data, opts)
           highlight(row, #line, #line + #r.prefix, r.prefix_group)
           line = line .. r.prefix
         end
-        local left = fit(r.left, math.max(1, avail - width_of(r.prefix)))
+        -- A short note (a link's "Merged") still fits on the right in the box.
+        local note = box and r.inline and r.right ~= "" and width_of(r.right) <= 10 and r.right or nil
+        local room = avail - width_of(r.prefix) - (note and (width_of(note) + GAP) or 0)
+        local left = fit(r.left, math.max(1, room))
         highlight(row, #line, #line + #left, r.left_group)
         line = line .. left
+        if note then
+          line = line .. string.rep(" ", math.max(GAP, width - 1 - width_of(line) - width_of(note)))
+          highlight(row, #line, #line + #note, r.right_group)
+          line = line .. note
+        end
         add(line)
         table.insert(out, { row = row, col = 2 + #r.prefix, end_col = 2 + #r.prefix + #left })
         if r.keep_note and r.right ~= "" then
@@ -783,6 +859,7 @@ function M.render(data, opts)
         left_group = LINK_HL,
         right = link.note,
         right_group = note_colour(link.note),
+        inline = true,
       }
     end, data.links)
     for i, placed in ipairs(columns(rows)) do
@@ -922,6 +999,43 @@ function M.render(data, opts)
       end
     end
     columns(rows)
+  end
+
+  if box then
+    -- The footer: a rule, how to open the full view, and its buttons, which a click
+    -- opens the full view at.
+    local footer_from = #lines
+    add(compose { { string.rep("─", math.max(1, width - 2)), RULE_HL } })
+    local hint = M.BOX_HINT[#M.BOX_HINT]
+    for _, words in ipairs(M.BOX_HINT) do
+      if width_of(words) <= width - 1 then
+        hint = words
+        break
+      end
+    end
+    hint = fit(hint, width - 1)
+    add(compose { { hint, "Comment" } })
+    local line = " "
+    for _, fold in ipairs(M.FOLDS) do
+      local count = #data[fold.name]
+      if count > 0 then
+        local label = (" ▸ %s %d "):format(fold.label, count)
+        if line ~= " " and width_of(line .. "  " .. label) > width then
+          add(line)
+          line = " "
+        elseif line ~= " " then
+          line = line .. "  "
+        end
+        local row, col = #lines, #line
+        highlight(row, col, col + #label, "FloatTermNotesButton")
+        table.insert(targets, { kind = "fold", name = fold.name, line = row, col = col, end_col = col + #label })
+        line = line .. label
+      end
+    end
+    if line ~= " " then
+      add(line)
+    end
+    return lines, highlights, targets, #lines - footer_from
   end
 
   if narrow then

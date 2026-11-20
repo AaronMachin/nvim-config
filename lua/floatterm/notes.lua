@@ -362,7 +362,7 @@ local current_sheet
 -- Claude's part as lines, highlights and what can be acted on (links and folds) at
 -- `width`, for the tab `record` (nil for a note no tab has), and whether there's
 -- nothing yet.
-local function claude_lines(sheet, width, record, note_id)
+local function claude_lines(sheet, width, record, note_id, box)
   local claude_notes = require "floatterm.claude_notes"
   local asking = needs_you(record)
   if sheet.data then
@@ -372,15 +372,16 @@ local function claude_lines(sheet, width, record, note_id)
       return require("floatterm.groups").dossier_opts(record, current_sheet)
     end)
     related = ok and related or {}
-    local lines, highlights, targets = claude_notes.render(sheet.data, {
+    local lines, highlights, targets, footer = claude_notes.render(sheet.data, {
       width = width,
       status = record and record.status,
       needs_you = asking,
       open = M.folds(note_id or (record and record.note_id)),
       part_of = related.part_of,
       workstreams = related.workstreams,
+      box = box,
     })
-    return lines, highlights, false, targets
+    return lines, highlights, false, targets, footer
   end
   local empty = #sheet.lines == 0
   local lines, highlights = vim.list_extend({}, empty and { CLAUDE_EMPTY } or sheet.lines), {}
@@ -400,10 +401,12 @@ function M.claude_sheet(note_id)
 end
 
 -- Claude's part of a note drawn at `width` as the pane draws it, for the tab `record`
--- (or nil): its lines and highlights. For lua/floatterm/overview's preview.
-function M.claude_preview(note_id, width, record)
-  local lines, highlights = claude_lines(read_sheet(note_id), width, record, note_id)
-  return lines, highlights
+-- (or nil): its lines and highlights. For lua/floatterm/overview's preview. With
+-- `box`, drawn for the box under the tab bar (claude_notes.render's opts.box), and its
+-- Decisions and Details buttons and the footer's row count come back too.
+function M.claude_preview(note_id, width, record, box)
+  local lines, highlights, _, targets, footer = claude_lines(read_sheet(note_id), width, record, note_id, box)
+  return lines, highlights, targets or {}, footer or 0
 end
 
 -- A note's Claude summary (its first line, "" without one), hashtags (each with its
@@ -1025,6 +1028,9 @@ end
 -- opens or folds a fold; d and t open or fold Decisions and Details from anywhere.
 -- Folds are remembered for the note, and the pane follows. q or Esc goes back to
 -- where you were in yours, typing if you were.
+--
+-- From the tab bar (s, or a click on the box under it), `opts.record` is the tab to
+-- show, and `opts.fold` a fold to open first (a click on its button).
 local reading = nil
 local VIEW_NS = api.nvim_create_namespace "floatterm_claude_view"
 local VIEW_KEYS = {
@@ -1084,7 +1090,8 @@ local function step(targets, cursor, dir)
   return targets[#targets]
 end
 
-function M.read_claude()
+function M.read_claude(opts)
+  opts = type(opts) == "table" and opts or {}
   -- The same key closes it, so pressing it again never stacks a second one.
   if reading and api.nvim_win_is_valid(reading) then
     api.nvim_win_close(reading, true)
@@ -1095,6 +1102,9 @@ function M.read_claude()
   -- From your notes (their file is <note_id>.md), or from a terminal tab.
   local note_id = vim.fn.fnamemodify(api.nvim_buf_get_name(from_buf), ":t"):match "^(.+)%.md$"
   local tab = floatterm().record(from_buf)
+  if opts.record then
+    tab, note_id = opts.record, opts.record.note_id
+  end
   if not note_id and tab then
     note_id = tab.note_id
   end
@@ -1129,6 +1139,10 @@ function M.read_claude()
     local lines, highlights, _, found = claude_lines(current_sheet(note_id), width, record, note_id)
     show_lines(buf, lines, highlights)
     targets = found
+  end
+  if opts.fold and note_id then
+    M.set_fold(note_id, opts.fold, true)
+    schedule_redraw()
   end
   fill()
 
@@ -1300,6 +1314,14 @@ function M.read_claude()
     act(target_at(targets, mouse.line - 1, col, true))
   end)
   api.nvim_create_autocmd("CursorMoved", { buffer = buf, callback = mark })
+  -- Opened at a fold: the cursor on its toggle, its items just below.
+  if opts.fold then
+    for _, target in ipairs(targets) do
+      if target.kind == "fold" and target.name == opts.fold then
+        go(target)
+      end
+    end
+  end
   -- Leaving it some other way (a click elsewhere) closes it there.
   api.nvim_create_autocmd("WinLeave", {
     buffer = buf,
