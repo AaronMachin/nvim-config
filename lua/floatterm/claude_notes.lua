@@ -573,6 +573,10 @@ function M.render(data, opts)
   -- a button each for Decisions and Details. The footer's row count comes back fourth,
   -- so it can be kept when the box is too short for everything.
   local box = opts.box
+  -- The full view (opts.full, Ctrl+Shift+o) wraps the title, the summary and what
+  -- Claude is doing in full too; the box keeps them to a few lines.
+  local whole = box or opts.full
+  local most = box and 2 or math.huge
   local narrow = box or width < M.NARROW
   local open = opts.open or {}
   local lines, highlights, targets = {}, {}, {}
@@ -609,13 +613,13 @@ function M.render(data, opts)
 
   -- Header: the ticket key as a badge and the title, the tab this sits under, the state
   -- with what Claude is doing and the bar, the hashtags.
-  if data.title ~= "" and box then
+  if data.title ~= "" and whole then
     -- Up to two lines, the ticket key's badge on the first.
     local key, rest = split_key(data.title)
     local badge = key and (" " .. key .. " ") or "✳ "
     local first = " " .. badge .. (key and " " or "")
     local body = key and rest or data.title
-    local wrapped = body ~= "" and wrap_most(body, width, first, "   ", 2) or { " " .. badge }
+    local wrapped = body ~= "" and wrap_most(body, width, first, "   ", most) or { " " .. badge }
     for i, line in ipairs(wrapped) do
       local row = #lines
       if i == 1 then
@@ -660,6 +664,14 @@ function M.render(data, opts)
     for _, line in ipairs(wrap_most(one_line(data.summary), width, " ", " ", 3)) do
       add(line)
     end
+  elseif whole and data.summary ~= "" then
+    -- In full, between two rules and from the left edge, so it yanks cleanly.
+    local rule = string.rep("─", math.max(1, width - 1))
+    add(compose { { rule, RULE_HL } })
+    for _, line in ipairs(wrap(one_line(data.summary), width - 1, "", "")) do
+      add(line)
+    end
+    add(compose { { rule, RULE_HL } })
   end
 
   local bar = nil
@@ -703,7 +715,7 @@ function M.render(data, opts)
   if own_line then
     room = width - 1
   end
-  if box and #pieces > 0 then
+  if whole and #pieces > 0 then
     -- The state's badge, then what Claude is doing (or asking) on up to two lines.
     local badge, said
     if asking or STATES[opts.status] then
@@ -712,7 +724,7 @@ function M.render(data, opts)
       said = pieces[1]
     end
     local first = " " .. (badge and (badge[1] .. " ") or "")
-    local wrapped = said and wrap_most(vim.trim(said[1]), width, first, "   ", 2) or { " " .. badge[1] }
+    local wrapped = said and wrap_most(vim.trim(said[1]), width, first, "   ", most) or { " " .. badge[1] }
     for i, line in ipairs(wrapped) do
       local row = #lines
       if i == 1 and badge then

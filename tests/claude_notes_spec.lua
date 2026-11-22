@@ -533,6 +533,26 @@ describe("Claude's notes", function()
     end)
   end)
 
+  describe("render for the full view", function()
+    it("shows the whole summary between two rules, from the left edge, and wraps what Claude is doing", function()
+      local summary = "Partners sign in to the console with their own provider. Model done, controller next, then the docs."
+      local now = "Task 2: model and factory states for the partner sign-in, then the controller"
+      local lines = cn.render({ title = "Sign-in", summary = summary, now = now }, { width = 40, status = "working", full = true })
+      local all = table.concat(lines, "\n")
+      assert.is_nil(all:find("…", 1, true), all)
+      assert.equals(" " .. string.rep("─", 39), lines[2])
+      local i = 3
+      local text = {}
+      while not lines[i]:find "^ ─" do
+        assert.is_nil(lines[i]:find "^ ", lines[i])
+        table.insert(text, lines[i])
+        i = i + 1
+      end
+      assert.equals(summary, table.concat(text, " "))
+      assert.truthy(all:gsub("\n%s+", " "):find("then the controller", 1, true), all)
+    end)
+  end)
+
   describe("render for the box under the tab bar", function()
     local function dossier()
       return {

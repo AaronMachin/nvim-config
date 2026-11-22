@@ -362,7 +362,7 @@ local current_sheet
 -- Claude's part as lines, highlights and what can be acted on (links and folds) at
 -- `width`, for the tab `record` (nil for a note no tab has), and whether there's
 -- nothing yet.
-local function claude_lines(sheet, width, record, note_id, box)
+local function claude_lines(sheet, width, record, note_id, box, full)
   local claude_notes = require "floatterm.claude_notes"
   local asking = needs_you(record)
   if sheet.data then
@@ -380,6 +380,7 @@ local function claude_lines(sheet, width, record, note_id, box)
       part_of = related.part_of,
       workstreams = related.workstreams,
       box = box,
+      full = full,
     })
     return lines, highlights, false, targets, footer
   end
@@ -1136,7 +1137,7 @@ function M.read_claude(opts)
   -- The same drawing as the pane, at the pop-up's width, with the folds as remembered.
   local targets = {}
   local function fill()
-    local lines, highlights, _, found = claude_lines(current_sheet(note_id), width, record, note_id)
+    local lines, highlights, _, found = claude_lines(current_sheet(note_id), width, record, note_id, false, true)
     show_lines(buf, lines, highlights)
     targets = found
   end
