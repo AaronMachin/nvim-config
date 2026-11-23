@@ -53,7 +53,7 @@ M.columns = {
       g = function()
         floatterm().switch_mode()
       end,
-    }, "Ctrl+Shift+g" },
+    }, "Ctrl+Shift+x" },
     {
       "h j k l",
       "move / resize",

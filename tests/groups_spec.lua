@@ -122,6 +122,22 @@ describe("tab groups", function()
       assert.equals(ft.record(lead).uid, ft.record(child).parent_uid)
     end)
 
+    it("is Ctrl+Shift+g from inside the tab, typing or not", function()
+      local lead = H.sleep_tab { label = "lead" }
+      local child = H.sleep_tab { label = "child" }
+      H.stub(vim.ui, "input", function(_, on_confirm)
+        on_confirm "1"
+      end)
+      vim.api.nvim_set_current_win(ft.window())
+      vim.api.nvim_feedkeys(vim.keycode "<C-S-g>", "x", false)
+      assert.equals(ft.record(lead).uid, ft.record(child).parent_uid)
+      -- Docked and floating swap on Ctrl+Shift+x now.
+      local maps = vim.tbl_map(function(m)
+        return m.lhs
+      end, vim.api.nvim_buf_get_keymap(child, "t"))
+      assert.truthy(vim.tbl_contains(maps, "<C-S-X>") or vim.tbl_contains(maps, "<C-S-x>"), vim.inspect(maps))
+    end)
+
     it("refuses a tab under itself or under one of its own children", function()
       local lead = H.sleep_tab { label = "lead" }
       local child = H.sleep_tab { label = "child" }

@@ -785,7 +785,15 @@ local function map_tab_keys(buf, modes)
     end, "terminal move tab " .. (delta < 0 and "earlier" or "later"))
   end
   -- Not Ctrl+Shift+m: Neovim reads that as Shift+Enter, which Claude needs for new lines.
-  map("<C-S-g>", M.switch_mode, "terminal switch between docked and floating box")
+  map("<C-S-x>", M.switch_mode, "terminal switch between docked and floating box")
+  -- This tab under another (or none), as g does in the tab bar. From the notes, the
+  -- tab showing.
+  map("<C-S-g>", function()
+    local tab = M.record(buf) and buf or M.current_buf()
+    if tab then
+      require("floatterm.groups").pick_parent(tab)
+    end
+  end, "terminal put this tab under another")
   map("<C-S-f>", M.toggle_fullscreen, "terminal full-screen on or off")
   for _, key in ipairs(extra_keys) do
     map(key[1], key[2], key[3])
