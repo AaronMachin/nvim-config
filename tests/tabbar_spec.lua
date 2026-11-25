@@ -348,6 +348,34 @@ describe("tab bar", function()
       marks = require "floatterm.marks"
     end)
 
+    it("takes the small Claude's pick after each turn, and none takes it off", function()
+      local buf = claude_tab { label = "api", status = "done" }
+      marks.from_summary(ft.record(buf), "review")
+      assert.equals("review", ft.record(buf).mark)
+      assert.equals("claude", ft.record(buf).mark_by)
+      marks.from_summary(ft.record(buf), "done")
+      assert.equals("done", ft.record(buf).mark)
+      marks.from_summary(ft.record(buf), "none")
+      assert.is_nil(ft.record(buf).mark)
+    end)
+
+    it("never replaces a mark you set yourself, until you take it off", function()
+      local buf = claude_tab { label = "api", status = "done" }
+      marks.set(buf, "blocked")
+      marks.from_summary(ft.record(buf), "done")
+      marks.from_summary(ft.record(buf), "none")
+      assert.equals("blocked", ft.record(buf).mark)
+      assert.is_nil(ft.record(buf).mark_by)
+
+      marks.set(buf, nil)
+      marks.from_summary(ft.record(buf), "parked")
+      assert.equals("parked", ft.record(buf).mark)
+      -- Setting the same word yourself makes it yours.
+      marks.set(buf, "parked")
+      marks.from_summary(ft.record(buf), "done")
+      assert.equals("parked", ft.record(buf).mark)
+    end)
+
     -- The highlight on `text` in line `row` of the bar (0-based), or nil.
     local function highlight_on(row, text)
       local buf = api.nvim_win_get_buf(tabbar.window())

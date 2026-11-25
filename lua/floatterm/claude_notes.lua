@@ -59,6 +59,7 @@ You keep a short dossier for a developer about a Claude Code session running in 
 - decisions: decisions made in the session and why, one terse line each.
 - details: anything else worth keeping, as terse lines: branch and commits, what's waiting on whom, other useful links with their URL.
 - for_you: about the latest turn only. If it ended with something the developer needs to look at or act on (a finding, a question for them, something held back until they say so, a failure Claude can't fix itself), one short line saying what, e.g. "PR note held for your OK: Migration upgrade failure isn't this branch's". Otherwise "". Never for a turn that simply finished its work.
+- mark: about the latest turn only, the tab's label in the tab bar. "done" when the turn finished what was asked, even if Claude offered to carry on. "review" when it ended waiting on the developer: a decision, a question, an approval, something held until they say so, something for them to test or read. "blocked" when it's waiting on someone or something else: a colleague's review, CI, another team. "parked" when nothing is in flight and the work was set aside. "none" when none of these fits.
 - tab_state: about the latest turn only, for the tab bar. state is "needs_you" when the turn ended waiting on the developer (a question, an approval, something held until they say so, a failure Claude can't get past) and "done" when it finished what was asked, even if Claude offered to carry on. label is up to 3 words saying which, e.g. "done", "pushed, CI green", "needs your OK", "pick an option", "review findings". Lowercase, no full stop.
 
 Keep what is still true from the current dossier, update what this turn changed, and drop what is stale or routine. Never invent a link or a task that isn't in the input. Keep decisions and details to about 10 lines each. No emoji. UK English.]]
@@ -99,6 +100,7 @@ local SCHEMA = {
     decisions = { type = "array", items = { type = "string" } },
     details = { type = "array", items = { type = "string" } },
     for_you = { type = "string" },
+    mark = { type = "string", enum = { "done", "review", "blocked", "parked", "none" } },
     tab_state = {
       type = "object",
       properties = {
@@ -108,7 +110,7 @@ local SCHEMA = {
       required = { "state", "label" },
     },
   },
-  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details", "for_you", "tab_state" },
+  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details", "for_you", "mark", "tab_state" },
 }
 
 -- Symbols one cell wide in any font (emoji aren't, and don't line up). The \u{f...}
@@ -1692,6 +1694,7 @@ function run(record)
           local live = require("floatterm").record(record.buf)
           if live then
             M.set_verdict(live, data.tab_state)
+            require("floatterm.marks").from_summary(live, data.mark)
             require("floatterm.look").from_summary(live, data.for_you)
           end
         end

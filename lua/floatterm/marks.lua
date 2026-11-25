@@ -91,12 +91,44 @@ function M.is_done(record)
 end
 
 -- Puts `word` on the tab `buf` (nil or "" takes the mark off), cut to MAX characters.
-function M.set(buf, word)
+-- `by` is "claude" for a mark the small Claude picked after a turn (M.from_summary);
+-- anything you set yourself is yours, and the small Claude leaves it alone.
+function M.set(buf, word, by)
   word = word and vim.trim(word) or ""
   if vim.fn.strchars(word) > M.MAX then
     word = vim.fn.strcharpart(word, 0, M.MAX)
   end
-  require("floatterm").update(buf, { mark = word ~= "" and word or vim.NIL })
+  require("floatterm").update(buf, {
+    mark = word ~= "" and word or vim.NIL,
+    mark_by = word ~= "" and by == "claude" and "claude" or vim.NIL,
+  })
+end
+
+-- The fixed labels by what they mean, as the small Claude picks them: done, review,
+-- blocked or parked, each the settings label with that key (d, r, b, p), so a label
+-- you've renamed in the settings is the one that goes on.
+local MEANINGS = { done = "d", review = "r", blocked = "b", parked = "p" }
+
+-- After the summary run for `record`: `meaning` is the small Claude's pick (done,
+-- review, blocked, parked, or none). It replaces only a mark it put on itself, never
+-- one you set; none takes its own mark off.
+function M.from_summary(record, meaning)
+  if not record or type(meaning) ~= "string" then
+    return
+  end
+  local mine = type(record.mark) == "string" and record.mark ~= "" and record.mark_by ~= "claude"
+  if mine then
+    return
+  end
+  local word
+  for _, label in ipairs(M.labels()) do
+    if label.key == MEANINGS[meaning] then
+      word = label.word
+    end
+  end
+  if (word or "") ~= (type(record.mark) == "string" and record.mark or "") then
+    M.set(record.buf, word, "claude")
+  end
 end
 
 -- `d`: done on, or off again.

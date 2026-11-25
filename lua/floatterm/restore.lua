@@ -414,6 +414,7 @@ local function snapshot()
       -- (lua/floatterm/marks).
       emoji = record.emoji,
       mark = record.mark,
+      mark_by = record.mark_by,
       -- Where it sits among the tabs (lua/floatterm/groups).
       uid = record.uid,
       parent_uid = record.parent_uid,
@@ -612,6 +613,7 @@ local function placed(tab)
     workstream_asked = tab.workstream_asked or vim.NIL,
     emoji = tab.emoji or vim.NIL,
     mark = tab.mark or vim.NIL,
+    mark_by = tab.mark_by or vim.NIL,
   }
 end
 
@@ -675,6 +677,7 @@ local function reopen(tab, report)
     workstream_asked = tab.workstream_asked or vim.NIL,
     emoji = tab.emoji or vim.NIL,
     mark = tab.mark or vim.NIL,
+    mark_by = tab.mark_by or vim.NIL,
     note_id = tab.note_id or vim.NIL,
     notes_on = tab.notes_on or vim.NIL,
     title = tab.title or vim.NIL,
