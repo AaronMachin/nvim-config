@@ -90,8 +90,26 @@ local function set_highlights()
 end
 set_highlights()
 
--- The state a Claude tab shows: { glyph, word, hl }.
+-- The small Claude's state and label for a finished turn (lua/floatterm/claude_notes),
+-- while the tab is still done: { state = "done" or "needs_you", label }, or nil.
+function M.verdict(record)
+  local verdict = record.verdict
+  if record.status ~= "done" or type(verdict) ~= "table" then
+    return nil
+  end
+  if (verdict.state == "done" or verdict.state == "needs_you") and type(verdict.label) == "string" and verdict.label ~= "" then
+    return verdict
+  end
+end
+
+-- The state a Claude tab shows: { glyph, word, hl }. A finished turn shows the small
+-- Claude's label in its state's colour.
 function M.state(record)
+  local verdict = M.verdict(record)
+  if verdict then
+    local base = M.STATES[verdict.state]
+    return { glyph = base.glyph, word = verdict.label, hl = base.hl }
+  end
   return M.STATES[record.status] or NEW
 end
 

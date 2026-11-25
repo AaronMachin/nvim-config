@@ -67,6 +67,18 @@ describe("claude hooks", function()
       assert.equals("/tmp/abc.jsonl", record.transcript_path)
     end)
 
+    it("drops the small Claude's label on every prompt, question and Stop", function()
+      for _, event in ipairs {
+        { hook_event_name = "UserPromptSubmit", prompt = "go" },
+        { hook_event_name = "Notification", message = "Allow?", notification_type = "permission_prompt" },
+        { hook_event_name = "Stop" },
+      } do
+        ft.update(buf, { verdict = { state = "done", label = "pushed" } })
+        claude.apply(record, event)
+        assert.is_nil(ft.record(buf).verdict, event.hook_event_name)
+      end
+    end)
+
     it("keeps the shell's own title aside so the bar doesn't show it as Claude's task", function()
       vim.b[buf].term_title = "me@host:~/app"
       claude.apply(record, { hook_event_name = "SessionStart", session_id = "a" })

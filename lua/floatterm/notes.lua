@@ -375,6 +375,7 @@ local function claude_lines(sheet, width, record, note_id, box, full)
     local lines, highlights, targets, footer = claude_notes.render(sheet.data, {
       width = width,
       status = record and record.status,
+      verdict = record and require("floatterm.tabbar").verdict(record),
       needs_you = asking,
       open = M.folds(note_id or (record and record.note_id)),
       part_of = related.part_of,

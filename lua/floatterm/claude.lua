@@ -19,7 +19,9 @@
 --                     background work still running (background agents or commands,
 --                     its background_tasks): Claude starts another turn when that
 --                     finishes, and the Stop after it says done
--- needs_you_message goes whenever the status moves on from "needs_you".
+-- needs_you_message goes whenever the status moves on from "needs_you". verdict (the
+-- small Claude's state and label for a finished turn, from lua/floatterm/claude_notes)
+-- goes on every prompt, question and Stop.
 --   SessionEnd        back to a shell tab, for when Claude exits and its shell stays
 -- A key pressed in a needs-you tab's terminal also takes it to "working" at once, as
 -- answering (approving, or Esc) always takes a key.
@@ -83,6 +85,7 @@ local CLAUDE_FIELDS = {
   "status",
   "status_since",
   "needs_you_message",
+  "verdict",
   "session_id",
   "transcript_path",
   "last_prompt",
@@ -274,6 +277,7 @@ local function apply(record, event, pid)
     claude.needs_you_message = vim.NIL
     -- A new turn: the safety net may flag it again (lua/floatterm/look).
     claude.look_flagged = vim.NIL
+    claude.verdict = vim.NIL
     -- A turn Claude starts itself (a background agent reporting back) may have no
     -- prompt of yours: the last one you gave stays.
     local line = first_line(event.prompt)
@@ -292,6 +296,7 @@ local function apply(record, event, pid)
     end
     local message = vim.trim(text(event.message))
     claude.status = "needs_you"
+    claude.verdict = vim.NIL
     -- One line, for the notes pane to show above the status bar.
     claude.needs_you_message = (message:gsub("%s+", " "))
     floatterm.update(record.buf, claude)
@@ -303,6 +308,8 @@ local function apply(record, event, pid)
   elseif name == "Stop" then
     claude.status = running_in_background(event) > 0 and "working" or "done"
     claude.needs_you_message = vim.NIL
+    -- The small Claude judges this turn afresh (lua/floatterm/claude_notes).
+    claude.verdict = vim.NIL
     floatterm.update(record.buf, claude)
     pcall(function()
       require("floatterm.claude_notes").on_stop(record)

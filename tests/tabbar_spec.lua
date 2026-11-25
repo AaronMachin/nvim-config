@@ -34,6 +34,20 @@ describe("tab bar", function()
   end)
 
   describe("what a tab shows", function()
+    it("shows the small Claude's label for a finished turn, in its state's colour, until the tab moves on", function()
+      local buf = claude_tab { label = "api", status = "done", title = "✳ Tidy" }
+      require("floatterm.claude_notes").set_verdict(ft.record(buf), { state = "needs_you", label = "needs your OK" })
+      local text = table.concat(draw(), "\n")
+      assert.truthy(text:find("● needs your OK", 1, true), text)
+      assert.equals("FloatTermNeedsYou", tabbar.state(ft.record(buf)).hl)
+
+      ft.update(buf, { status = "working" })
+      assert.is_nil(table.concat(draw(), "\n"):find("needs your OK", 1, true))
+      -- A late answer for a tab that's moved on is dropped.
+      require("floatterm.claude_notes").set_verdict(ft.record(buf), { state = "done", label = "pushed" })
+      assert.equals("needs your OK", ft.record(buf).verdict.label)
+    end)
+
     it("gives a Claude tab with no status the 'new' state", function()
       assert.equals("new", tabbar.state({}).word)
       assert.equals("●", tabbar.state({ status = "needs_you" }).glyph)
@@ -656,6 +670,7 @@ describe("bookmark", function()
     H.restore()
     H.close_floats()
   end)
+
 
   it("shows a mark per Claude tab in tab order, and nothing for shells", function()
     H.sleep_tab()

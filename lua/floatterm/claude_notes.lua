@@ -59,6 +59,7 @@ You keep a short dossier for a developer about a Claude Code session running in 
 - decisions: decisions made in the session and why, one terse line each.
 - details: anything else worth keeping, as terse lines: branch and commits, what's waiting on whom, other useful links with their URL.
 - for_you: about the latest turn only. If it ended with something the developer needs to look at or act on (a finding, a question for them, something held back until they say so, a failure Claude can't fix itself), one short line saying what, e.g. "PR note held for your OK: Migration upgrade failure isn't this branch's". Otherwise "". Never for a turn that simply finished its work.
+- tab_state: about the latest turn only, for the tab bar. state is "needs_you" when the turn ended waiting on the developer (a question, an approval, something held until they say so, a failure Claude can't get past) and "done" when it finished what was asked, even if Claude offered to carry on. label is up to 3 words saying which, e.g. "done", "pushed, CI green", "needs your OK", "pick an option", "review findings". Lowercase, no full stop.
 
 Keep what is still true from the current dossier, update what this turn changed, and drop what is stale or routine. Never invent a link or a task that isn't in the input. Keep decisions and details to about 10 lines each. No emoji. UK English.]]
 
@@ -98,8 +99,16 @@ local SCHEMA = {
     decisions = { type = "array", items = { type = "string" } },
     details = { type = "array", items = { type = "string" } },
     for_you = { type = "string" },
+    tab_state = {
+      type = "object",
+      properties = {
+        state = { type = "string", enum = { "done", "needs_you" } },
+        label = { type = "string" },
+      },
+      required = { "state", "label" },
+    },
   },
-  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details", "for_you" },
+  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details", "for_you", "tab_state" },
 }
 
 -- Symbols one cell wide in any font (emoji aren't, and don't line up). The \u{f...}
@@ -703,8 +712,10 @@ function M.render(data, opts)
       table.insert(pieces, { " " .. message, "FloatTermNotesAsking" })
     end
   elseif STATES[opts.status] then
-    local state = STATES[opts.status]
-    table.insert(pieces, { " " .. state[1] .. " " .. state[2] .. " ", state[3] })
+    -- A finished turn shows the small Claude's label in its state's colour.
+    local verdict = opts.status == "done" and type(opts.verdict) == "table" and STATES[opts.verdict.state] and opts.verdict
+    local state = STATES[verdict and verdict.state or opts.status]
+    table.insert(pieces, { " " .. state[1] .. " " .. (verdict and verdict.label or state[2]) .. " ", state[3] })
     if data.now ~= "" then
       table.insert(pieces, { " " .. data.now })
     end
@@ -1680,6 +1691,7 @@ function run(record)
         if data and type(data.for_you) == "string" then
           local live = require("floatterm").record(record.buf)
           if live then
+            M.set_verdict(live, data.tab_state)
             require("floatterm.look").from_summary(live, data.for_you)
           end
         end
@@ -1780,6 +1792,25 @@ local function with_note(record)
     end
   end
   return record
+end
+
+-- The small Claude's read on the turn that just finished, as the tab bar's state:
+-- { state = "done" or "needs_you", label = a few words }. Only while the tab is still
+-- done: a prompt sent since (or a question from Claude) has moved it on, and the
+-- hooks clear it then (lua/floatterm/claude).
+function M.set_verdict(record, tab_state)
+  if record.status ~= "done" or type(tab_state) ~= "table" then
+    return
+  end
+  local state = tab_state.state
+  local label = type(tab_state.label) == "string" and vim.trim(tab_state.label:gsub("%s+", " ")) or ""
+  if (state ~= "done" and state ~= "needs_you") or label == "" then
+    return
+  end
+  if vim.fn.strchars(label) > 24 then
+    label = vim.fn.strcharpart(label, 0, 23) .. "…"
+  end
+  require("floatterm").update(record.buf, { verdict = { state = state, label = label } })
 end
 
 function M.on_stop(record)

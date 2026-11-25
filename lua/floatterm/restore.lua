@@ -433,6 +433,7 @@ local function snapshot()
       tab.last_prompt = record.last_prompt
       tab.status = record.status == "working" and "done" or record.status
       tab.status_since = record.status_since
+      tab.verdict = record.status == "done" and record.verdict or nil
     elseif type(record.resume) == "table" and record.resume.session_id then
       -- A shell tab whose Claude was stopped from outside (lua/floatterm/claude): saved
       -- as the Claude tab it was, so it's resumed rather than lost.
@@ -680,6 +681,7 @@ local function reopen(tab, report)
     last_prompt = tab.last_prompt or vim.NIL,
     status = tab.status or vim.NIL,
     status_since = tab.status_since or vim.NIL,
+    verdict = tab.verdict or vim.NIL,
   })
   report.opened = report.opened + 1
   local started = vim.uv.now()
