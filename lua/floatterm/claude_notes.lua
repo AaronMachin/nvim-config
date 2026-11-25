@@ -58,6 +58,7 @@ You keep a short dossier for a developer about a Claude Code session running in 
 - links: the tickets Claude created, updated or is working on (this session's ticket first) and the pull requests it made, pushed to or is reviewing. Each with its full URL, a short title ("SD-494 · this session's ticket", "PR #231 cloud/console") and a one or two word note on what happened to it ("In development", "Created", "Opened", "Reviewing", "Merged"). Never homepages, site roots or generic wiki roots. Other useful links go in details with their URL.
 - decisions: decisions made in the session and why, one terse line each.
 - details: anything else worth keeping, as terse lines: branch and commits, what's waiting on whom, other useful links with their URL.
+- for_you: about the latest turn only. If it ended with something the developer needs to look at or act on (a finding, a question for them, something held back until they say so, a failure Claude can't fix itself), one short line saying what, e.g. "PR note held for your OK: Migration upgrade failure isn't this branch's". Otherwise "". Never for a turn that simply finished its work.
 
 Keep what is still true from the current dossier, update what this turn changed, and drop what is stale or routine. Never invent a link or a task that isn't in the input. Keep decisions and details to about 10 lines each. No emoji. UK English.]]
 
@@ -96,8 +97,9 @@ local SCHEMA = {
     },
     decisions = { type = "array", items = { type = "string" } },
     details = { type = "array", items = { type = "string" } },
+    for_you = { type = "string" },
   },
-  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details" },
+  required = { "title", "summary", "now", "hashtags", "tasks", "links", "decisions", "details", "for_you" },
 }
 
 -- Symbols one cell wide in any font (emoji aren't, and don't line up). The \u{f...}
@@ -1674,6 +1676,13 @@ function run(record)
       end
       if written then
         vim.api.nvim_exec_autocmds("User", { pattern = "FloatTermClaudeNotesChanged", data = { note_id = note_id } })
+        -- The safety net: the turn ended with something for you that Claude didn't flag.
+        if data and type(data.for_you) == "string" then
+          local live = require("floatterm").record(record.buf)
+          if live then
+            require("floatterm.look").from_summary(live, data.for_you)
+          end
+        end
       else
         warn_once(record, "couldn't write " .. path .. ": " .. tostring(write_err))
       end

@@ -271,9 +271,17 @@ local function vertical_tab(record, row)
     table.insert(second, 1, { " ", nil })
     table.insert(second, 1, mark)
   end
+  -- Claude found something for you (lua/floatterm/look): the tab lit up purple, what
+  -- it found in place of its state and folder.
+  if record.look then
+    for i, chunk in ipairs(first) do
+      first[i] = { chunk[1], "FloatTermLook" }
+    end
+    second = { { "   " .. record.look, "FloatTermLook" } }
+  end
   local lines = { first, second }
   if row.folded then
-    table.insert(lines[1], { " ▸" .. row.folded, "FloatTermWorking" })
+    table.insert(lines[1], { " ▸" .. row.folded, record.look and "FloatTermLook" or "FloatTermWorking" })
   end
   return lines
 end
@@ -335,7 +343,18 @@ local function render_vertical(rows, current, height, width)
       if head ~= "" then
         table.insert(chunks, { n == 1 and head or rest, "FloatTermTree" })
       end
-      table.insert(out, truncate(vim.list_extend(chunks, line), width))
+      local drawn = truncate(vim.list_extend(chunks, line), width)
+      -- A lit-up tab's colour runs to the bar's edge.
+      if rows[i].record.look then
+        local used = 0
+        for _, chunk in ipairs(drawn) do
+          used = used + vim.fn.strdisplaywidth(chunk[1])
+        end
+        if used < width then
+          table.insert(drawn, { string.rep(" ", width - used), "FloatTermLook" })
+        end
+      end
+      table.insert(out, drawn)
     end
     spans[i] = { first = first, last = #out - 1 }
   end
@@ -394,7 +413,11 @@ local function horizontal_tab(record, level, cap, row)
   local icon = require("floatterm.emoji").icon(record)
   -- Its mark (lua/floatterm/marks) after the emoji, and a tab marked done dim.
   local marks = require "floatterm.marks"
-  if marks.is_done(record) then
+  if record.look then
+    for i, chunk in ipairs(chunks) do
+      chunks[i] = { chunk[1], "FloatTermLook" }
+    end
+  elseif marks.is_done(record) then
     for i, chunk in ipairs(chunks) do
       chunks[i] = { chunk[1], "FloatTermMarkedDone" }
     end
@@ -626,6 +649,9 @@ end
 -- the title, what Claude is doing (or asking), the progress bar, the task in progress
 -- and the first link. Chunks { text, hl }; nothing for a tab without a summary.
 function M.summary_line(record, width)
+  if record and record.look then
+    return truncate({ { " " .. record.look .. " ", "FloatTermLook" } }, width)
+  end
   if not (record and record.kind == "claude" and record.note_id) then
     return { { "", nil } }
   end
@@ -1672,6 +1698,7 @@ function M.setup()
   require("floatterm.groups").setup()
   require("floatterm.emoji").setup()
   require("floatterm.remote").setup()
+  require("floatterm.look").setup()
 
   local group = api.nvim_create_augroup("floatterm_tabbar", { clear = true })
   local keys_added = false

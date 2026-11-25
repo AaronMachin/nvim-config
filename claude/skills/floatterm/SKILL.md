@@ -1,11 +1,17 @@
 ---
 name: floatterm
-description: Use when $FLOATTERM_TAB_ID is set (this session runs in a tab of the user's nvim floating terminal) and you want the user to look at a file (a plan, spec or draft to approve), want to start another Claude session or a new terminal tab (especially "a tab under this one" for part of this work), or the user mentions their notes, the notes panel or "my notes".
+description: Use when $FLOATTERM_TAB_ID is set (this session runs in a tab of the user's nvim floating terminal) and you've found something the user needs to look at or act on, want them to look at a file (a plan, spec or draft to approve), want to start another Claude session or a new terminal tab (especially "a tab under this one" for part of this work), or the user mentions their notes, the notes panel or "my notes".
 ---
 
 # Running in the user's floating terminal
 
 This session runs in a tab of the user's nvim floating terminal (`$FLOATTERM_TAB_ID` is set, and `$NVIM` is the nvim). The tabs are listed in a tab bar beside the terminal. The user moves between tabs themselves, so nothing you do should move their focus or open things in front of them. The scripts below are in `~/.config/nvim/bin/`.
+
+## Telling the user you've found something
+
+The user has several tabs going and only sees this one's output when they switch to it. When you end a turn with something they need to look at or act on, run `floatterm-look "<one short line on what it is>"` as your last step. For example: a finding ("Found it: the retry loop in Sync.php never backs off"), something you're holding back until they say so ("PR note held for your OK"), or a failure you can't fix yourself ("CI needs a fresh run, I can't start one").
+
+It lights this tab up purple in their tab bar, with your line in place of the tab's state, and clears when they go into the tab. It prints `flagged`, or `shown` if they're already looking at this tab. Don't use it when a turn simply finished its work: the bar already shows done. A question still goes in the decisions pane if that's on, and you flag the tab as well. Keep the line short (about 60 characters show in the bar) and still say everything in your reply.
 
 ## Showing the user a file
 

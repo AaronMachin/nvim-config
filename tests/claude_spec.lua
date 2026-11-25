@@ -85,6 +85,7 @@ describe("claude hooks", function()
 
     it("UserPromptSubmit: working, with the prompt's first line cut to 80", function()
       record.needs_you_message = "old"
+      record.look_flagged = true
       claude.apply(
         record,
         { hook_event_name = "UserPromptSubmit", prompt = "\n  " .. string.rep("x", 100) .. "\nmore" }
@@ -93,6 +94,8 @@ describe("claude hooks", function()
       assert.equals(80, vim.fn.strchars(record.last_prompt))
       assert.truthy(record.last_prompt:find "…$")
       assert.is_nil(record.needs_you_message)
+      -- A new turn: the safety net may light the tab up again (lua/floatterm/look).
+      assert.is_nil(record.look_flagged)
     end)
 
     it("Notification asking for permission: needs you, with the message on one line", function()

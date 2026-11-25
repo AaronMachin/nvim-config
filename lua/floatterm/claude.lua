@@ -272,6 +272,8 @@ local function apply(record, event, pid)
     local first = record.last_prompt == nil
     claude.status = "working"
     claude.needs_you_message = vim.NIL
+    -- A new turn: the safety net may flag it again (lua/floatterm/look).
+    claude.look_flagged = vim.NIL
     -- A turn Claude starts itself (a background agent reporting back) may have no
     -- prompt of yours: the last one you gave stays.
     local line = first_line(event.prompt)

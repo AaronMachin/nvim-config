@@ -1,0 +1,39 @@
+#!/bin/bash
+# Lights up the floatterm tab this runs in purple, with a line on what Claude found
+# for you in place of its state (see lua/floatterm/look.lua). Going into the tab
+# clears it. The floatterm skill (claude/skills/floatterm) and the note the
+# SessionStart hook adds tell Claude when to use it.
+#
+#   floatterm-look "<one short line on what it is>"
+#
+# Prints "flagged", or "shown" when you're looking at the tab already (the line only
+# pops up). Outside a floatterm tab it says so and exits 1.
+
+fail() {
+  echo "floatterm-look: $1" >&2
+  exit 1
+}
+
+[ $# -ge 1 ] && [ -n "$*" ] || fail 'give a line: floatterm-look "<what it is>"'
+message="$*"
+
+if [ -z "$NVIM" ] || [ -z "$FLOATTERM_TAB_ID" ] || [ -n "${FLOATTERM_TAB_ID//[0-9]/}" ]; then
+  fail "not running in a floatterm tab, so there's no tab to light up: say it in your reply"
+fi
+
+# The message goes in a file, so it needs no quoting. One call, given up after 3 seconds.
+file=$(mktemp "${TMPDIR:-/tmp}/floatterm-look.XXXXXX") || fail "couldn't make a temporary file"
+out=$(mktemp "${TMPDIR:-/tmp}/floatterm-look.XXXXXX") || fail "couldn't make a temporary file"
+trap 'rm -f "$file" "$out"' EXIT
+printf '%s' "$message" >"$file"
+expr="luaeval('(function(a) local ok, m = pcall(require, \"floatterm.look\") if not ok then return \"\" end local f = io.open(a[2]) if not f then return \"\" end local text = f:read(\"*a\") f:close() local ok2, r = pcall(m.flag, a[1], text) return ok2 and r or \"\" end)(_A)', ['$FLOATTERM_TAB_ID', '$file'])"
+nvim --clean --headless --server "$NVIM" --remote-expr "$expr" >"$out" 2>/dev/null &
+pid=$!
+(sleep 3 && kill "$pid") 2>/dev/null &
+watchdog=$!
+wait "$pid" 2>/dev/null
+kill "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
+result=$(cat "$out")
+[ -n "$result" ] || fail "nvim didn't take it (an nvim started before this script existed needs restarting): say it in your reply"
+printf '%s\n' "$result"
